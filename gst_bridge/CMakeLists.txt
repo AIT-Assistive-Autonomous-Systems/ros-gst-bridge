@@ -63,6 +63,7 @@ add_library(gst_bridge SHARED
   src/rosbaseiface.cpp
   src/rosbasesink.cpp
   src/rosbasesrc.cpp
+  src/rosrawsink.cpp
 )
 target_include_directories(gst_bridge PUBLIC
   ${rclcpp_INCLUDE_DIRS}
@@ -99,6 +100,7 @@ add_library(rosgstbridge SHARED
   src/rosaudiosrc.cpp
   src/rosimagesrc.cpp
   src/rostextsrc.cpp
+  src/rosrawsrc.cpp
 )
 
 
