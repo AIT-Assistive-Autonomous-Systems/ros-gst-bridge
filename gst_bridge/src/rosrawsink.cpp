@@ -47,7 +47,7 @@ static GstFlowReturn rosrawsink_render(
 enum { PROP_0, PROP_ROS_TOPIC };
 
 static GstStaticPadTemplate rosrawsink_sink_template = GST_STATIC_PAD_TEMPLATE(
-  "sink", GST_PAD_SINK, GST_PAD_ALWAYS, GST_STATIC_CAPS("application/x-onvif-metadata"));
+  "sink", GST_PAD_SINK, GST_PAD_ALWAYS, GST_STATIC_CAPS("application/x-onvif-metadata; application/json"));
 
 G_DEFINE_TYPE_WITH_CODE(
   Rosrawsink, rosrawsink, GST_TYPE_ROS_BASE_SINK,

@@ -64,6 +64,8 @@ struct _RosBaseSink
   gchar * node_namespace;
   RosTimestampMode timestamp_mode;
   TimestampConversionMode timestamp_conversion_mode;
+  // reference timestamp meta used in timestamp-mode=reference (caps string)
+  gchar * reference_caps;
 
   // private variables to construct the node interfaces
   RosBaseImp local_node;

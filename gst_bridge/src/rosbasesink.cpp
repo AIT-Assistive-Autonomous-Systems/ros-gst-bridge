@@ -58,25 +58,44 @@ static gboolean rosbasesink_close(RosBaseSink * sink);
   XXX provide a mechanism for ROS to provide a clock
 */
 
-enum { PROP_0, PROP_ROS_NAME, PROP_ROS_NAMESPACE, PROP_ROS_START_TIME, PROP_TIMESTAMP_MODE, PROP_TIMESTAMP_CONVERSION_MODE };
+enum { PROP_0, PROP_ROS_NAME, PROP_ROS_NAMESPACE, PROP_ROS_START_TIME, PROP_TIMESTAMP_MODE, PROP_TIMESTAMP_CONVERSION_MODE, PROP_REFERENCE_CAPS };
 
-std::optional<rclcpp::Time> get_reference_timestamp(GstBuffer * buf)
+/*
+  Timestamp of the buffer's reference timestamp meta matching `reference`
+  (e.g. timestamp/x-unix), else of a timestamp/x-ntp meta. NTP times are
+  converted to the Unix epoch, all others are used as they are. A buffer can
+  carry several reference metas (x-ptp, x-unix, x-ntp), so the first meta of
+  any kind is not enough.
+*/
+std::optional<rclcpp::Time> get_reference_timestamp(GstBuffer * buf, const gchar * reference)
 {
-  GstReferenceTimestampMeta * ref_meta = gst_buffer_get_reference_timestamp_meta(buf, nullptr);
+  constexpr uint64_t NTP_UNIX_OFFSET_SECS = 2'208'988'800ULL;
+  constexpr uint64_t NTP_UNIX_OFFSET_NS = NTP_UNIX_OFFSET_SECS * 1'000'000'000ULL;
 
-  if (ref_meta) {
-    rclcpp::Time time_stamp{};
-
-    constexpr uint64_t NTP_UNIX_OFFSET_SECS = 2'208'988'800ULL;
-    constexpr uint64_t NTP_UNIX_OFFSET_NS = NTP_UNIX_OFFSET_SECS * 1'000'000'000ULL;
-
-    uint64_t corrected_ns = ref_meta->timestamp - NTP_UNIX_OFFSET_NS;
-
-    GstClockTime ntp_time = corrected_ns;
-
-    time_stamp = rclcpp::Time(static_cast<int64_t>(ntp_time));
-
-    return time_stamp;
+  const gchar * candidates[] = {reference, "timestamp/x-ntp"};
+  for (const gchar * name : candidates) {
+    if (!name || !*name) {
+      continue;
+    }
+    GstCaps * caps = gst_caps_from_string(name);
+    if (!caps) {
+      continue;
+    }
+    GstReferenceTimestampMeta * ref_meta = gst_buffer_get_reference_timestamp_meta(buf, caps);
+    const bool is_ntp =
+      gst_structure_has_name(gst_caps_get_structure(caps, 0), "timestamp/x-ntp");
+    gst_caps_unref(caps);
+    if (!ref_meta) {
+      continue;
+    }
+    uint64_t ns = ref_meta->timestamp;
+    if (is_ntp) {
+      if (ns < NTP_UNIX_OFFSET_NS) {
+        continue;
+      }
+      ns -= NTP_UNIX_OFFSET_NS;
+    }
+    return rclcpp::Time(static_cast<int64_t>(ns));
   }
 
   return std::nullopt;
@@ -88,7 +107,7 @@ static GType gst_ros_timestamp_mode_get_type(void)
   if (!type) {
     static const GEnumValue values[] = {
       {TIMESTAMP_MODE_ROS_OFFSET, "Ros Offset Adjusted", "ros-offset"},
-      {TIMESTAMP_MODE_REFERENCE, "Reference Timestamp (NTP)", "reference"},
+      {TIMESTAMP_MODE_REFERENCE, "Reference timestamp meta (reference-caps, else x-ntp)", "reference"},
       {TIMESTAMP_MODE_PTS, "Presentation Timestamp", "pts"},
       {0, NULL, NULL}};
     type = g_enum_register_static("GstRosTimestampMode", values);
@@ -170,6 +189,14 @@ static void rosbasesink_class_init(RosBaseSinkClass * klass)
       CONVERSION_MODE_NONE,  // default
       (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
+  g_object_class_install_property(
+    object_class, PROP_REFERENCE_CAPS,
+    g_param_spec_string(
+      "reference-caps", "Reference Caps",
+      "Reference timestamp meta used with timestamp-mode=reference "
+      "(falls back to timestamp/x-ntp, converted to the Unix epoch)",
+      "timestamp/x-unix", (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
   element_class->change_state = GST_DEBUG_FUNCPTR(
     rosbasesink_change_state);  //use state change events to open and close publishers
   basesink_class->render = GST_DEBUG_FUNCPTR(rosbasesink_render);  // gives us a buffer to forward
@@ -180,6 +207,7 @@ static void rosbasesink_init(RosBaseSink * sink)
   sink->node_name = g_strdup("gst_base_sink_node");
   sink->node_namespace = g_strdup("");
   sink->stream_start_prop = GST_CLOCK_TIME_NONE;
+  sink->reference_caps = g_strdup("timestamp/x-unix");
 }
 
 void rosbasesink_set_property(
@@ -225,6 +253,11 @@ void rosbasesink_set_property(
       sink->timestamp_conversion_mode = (TimestampConversionMode)g_value_get_enum(value);
       break;
 
+    case PROP_REFERENCE_CAPS:
+      g_free(sink->reference_caps);
+      sink->reference_caps = g_value_dup_string(value);
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
       break;
@@ -258,6 +291,10 @@ void rosbasesink_get_property(
     
     case PROP_TIMESTAMP_CONVERSION_MODE:
       g_value_set_enum(value, sink->timestamp_conversion_mode);
+      break;
+
+    case PROP_REFERENCE_CAPS:
+      g_value_set_string(value, sink->reference_caps);
       break;
 
     default:
@@ -379,7 +416,7 @@ static GstFlowReturn rosbasesink_render(GstBaseSink * base_sink, GstBuffer * buf
 
   switch (sink->timestamp_mode) {
     case TIMESTAMP_MODE_REFERENCE: {
-      auto reference_time = get_reference_timestamp(buf);
+      auto reference_time = get_reference_timestamp(buf, sink->reference_caps);
 
       if (reference_time.has_value()) {
         msg_time = *reference_time;
