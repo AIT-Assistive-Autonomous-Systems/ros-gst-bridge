@@ -43,9 +43,15 @@ G_BEGIN_DECLS
 typedef struct _Rosaudiosrc Rosaudiosrc;
 typedef struct _RosaudiosrcClass RosaudiosrcClass;
 
+struct RosaudiosrcPrivate;
+
 struct _Rosaudiosrc
 {
   RosBaseSrc parent;
+
+  // C++ members, defined in the .cpp: allocated with new in _init and deleted in _finalize
+  // (GObject zero allocates instances without running C++ constructors)
+  RosaudiosrcPrivate * priv;
   gchar * sub_topic;
   gchar * frame_id;
   gchar * encoding;
@@ -55,11 +61,6 @@ struct _Rosaudiosrc
 
   // XXX this is too much boilerplate.
   size_t msg_queue_max;
-  std::queue<audio_msgs::msg::Audio::ConstSharedPtr> msg_queue;
-  std::mutex msg_queue_mtx;
-  std::condition_variable msg_queue_cv;
-
-  rclcpp::Subscription<audio_msgs::msg::Audio>::SharedPtr sub;
 
   GstAudioInfo audio_info;
   uint64_t msg_seq_num;

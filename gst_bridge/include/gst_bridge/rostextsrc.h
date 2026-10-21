@@ -40,20 +40,21 @@ G_BEGIN_DECLS
 typedef struct _Rostextsrc Rostextsrc;
 typedef struct _RostextsrcClass RostextsrcClass;
 
+struct RostextsrcPrivate;
+
 struct _Rostextsrc
 {
   RosBaseSrc parent;
+
+  // C++ members, defined in the .cpp: allocated with new in _init and deleted in _finalize
+  // (GObject zero allocates instances without running C++ constructors)
+  RostextsrcPrivate * priv;
   GstPad * srcpad;
   gboolean silent;
   gchar * sub_topic;
 
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub;
-
   // XXX this is too much boilerplate.
   size_t msg_queue_max;
-  std::queue<std_msgs::msg::String::ConstSharedPtr> msg_queue;
-  std::mutex msg_queue_mtx;
-  std::condition_variable msg_queue_cv;
 };
 
 struct _RostextsrcClass

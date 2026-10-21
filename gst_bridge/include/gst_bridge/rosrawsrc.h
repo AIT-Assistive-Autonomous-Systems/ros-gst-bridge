@@ -39,23 +39,24 @@ G_BEGIN_DECLS
 typedef struct _Rosrawsrc Rosrawsrc;
 typedef struct _RosrawsrcClass RosrawsrcClass;
 
+struct RosrawsrcPrivate;
+
 struct _Rosrawsrc
 {
   using MsgType = gst_msgs::msg::StreamStampedData;
 
   RosBaseSrc parent;
+
+  // C++ members, defined in the .cpp: allocated with new in _init and deleted in _finalize
+  // (GObject zero allocates instances without running C++ constructors)
+  RosrawsrcPrivate * priv;
   GstPad * srcpad;
   gboolean silent;
   gchar * sub_topic;
   gchar * caps_string;
 
-  rclcpp::Subscription<MsgType>::SharedPtr sub;
-
   bool started;
   size_t msg_queue_max;
-  std::queue<MsgType::ConstSharedPtr> msg_queue;
-  std::mutex msg_queue_mtx;
-  std::condition_variable msg_queue_cv;
 };
 
 struct _RosrawsrcClass

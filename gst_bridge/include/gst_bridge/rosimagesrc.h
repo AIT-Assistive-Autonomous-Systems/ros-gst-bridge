@@ -46,9 +46,15 @@ G_BEGIN_DECLS
 typedef struct _Rosimagesrc Rosimagesrc;
 typedef struct _RosimagesrcClass RosimagesrcClass;
 
+struct RosimagesrcPrivate;
+
 struct _Rosimagesrc
 {
   RosBaseSrc parent;
+
+  // C++ members, defined in the .cpp: allocated with new in _init and deleted in _finalize
+  // (GObject zero allocates instances without running C++ constructors)
+  RosimagesrcPrivate * priv;
   gchar * sub_topic;
   gchar * frame_id;
   gchar * encoding;
@@ -58,11 +64,6 @@ struct _Rosimagesrc
 
   // XXX this is too much boilerplate.
   size_t msg_queue_max;
-  std::deque<sensor_msgs::msg::Image::ConstSharedPtr> msg_queue;
-  std::mutex msg_queue_mtx;
-  std::condition_variable msg_queue_cv;
-
-  rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub;
 
   int height;
   int width;

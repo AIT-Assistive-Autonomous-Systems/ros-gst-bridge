@@ -42,19 +42,20 @@ G_BEGIN_DECLS
 typedef struct _Rosimagesink Rosimagesink;
 typedef struct _RosimagesinkClass RosimagesinkClass;
 
+struct RosimagesinkPrivate;
+
 struct _Rosimagesink
 {
   RosBaseSink parent;
+
+  // C++ members, defined in the .cpp: allocated with new in _init and deleted in _finalize
+  // (GObject zero allocates instances without running C++ constructors)
+  RosimagesinkPrivate * priv;
 
   gchar * pub_topic;
   gchar * frame_id;
   gchar * encoding;   //image topic encoding string
   gchar * init_caps;  //optional caps override (used for limited apis)
-
-  rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub;
-
-  // allocated with new in rosimagesink_init, deleted in rosimagesink_finalize
-  gst_bridge::CameraInfoSettings * camera_info;
 
   int height;
   int width;

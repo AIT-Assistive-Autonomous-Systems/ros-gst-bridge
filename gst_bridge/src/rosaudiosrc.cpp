@@ -34,6 +34,14 @@
 GST_DEBUG_CATEGORY_STATIC(rosaudiosrc_debug_category);
 #define GST_CAT_DEFAULT rosaudiosrc_debug_category
 
+struct RosaudiosrcPrivate
+{
+  std::queue<audio_msgs::msg::Audio::ConstSharedPtr> msg_queue;
+  std::mutex msg_queue_mtx;
+  std::condition_variable msg_queue_cv;
+  rclcpp::Subscription<audio_msgs::msg::Audio>::SharedPtr sub;
+};
+
 /* prototypes */
 
 static void rosaudiosrc_set_property(
@@ -42,6 +50,7 @@ static void rosaudiosrc_get_property(
   GObject * object, guint property_id, GValue * value, GParamSpec * pspec);
 
 static void rosaudiosrc_init(Rosaudiosrc * src);
+static void rosaudiosrc_finalize(GObject * object);
 
 static gboolean rosaudiosrc_open(RosBaseSrc * ros_base_src);
 static gboolean rosaudiosrc_close(RosBaseSrc * ros_base_src);
@@ -91,6 +100,7 @@ static void rosaudiosrc_class_init(RosaudiosrcClass * klass)
 
   object_class->set_property = rosaudiosrc_set_property;
   object_class->get_property = rosaudiosrc_get_property;
+  object_class->finalize = rosaudiosrc_finalize;
 
   /* Setting up pads and setting metadata should be moved to
      base_class_init if you intend to subclass this class. */
@@ -142,7 +152,9 @@ static void rosaudiosrc_class_init(RosaudiosrcClass * klass)
 
 static void rosaudiosrc_init(Rosaudiosrc * src)
 {
+  src->priv = new RosaudiosrcPrivate();
   RosBaseSrc * ros_base_src GST_ROS_BASE_SRC(src);
+  g_free(ros_base_src->node_name);  // set by the base class init
   ros_base_src->node_name = g_strdup("gst_audio_src_node");
   src->sub_topic = g_strdup("gst_audio_sub");
   src->frame_id = g_strdup("");
@@ -151,8 +163,6 @@ static void rosaudiosrc_init(Rosaudiosrc * src)
 
   src->msg_init = true;
   src->msg_queue_max = 1;
-  // XXX why does queue segfault without expicit construction?
-  src->msg_queue = std::queue<audio_msgs::msg::Audio::ConstSharedPtr>();
 
   /* configure basesrc to be a live source */
   gst_base_src_set_live(GST_BASE_SRC(src), TRUE);  // XXX revise this
@@ -161,6 +171,18 @@ static void rosaudiosrc_init(Rosaudiosrc * src)
   /* make basesrc set timestamps on outgoing buffers based on the running_time
    * when they were captured */
   gst_base_src_set_do_timestamp(GST_BASE_SRC(src), TRUE);  // XXX revise this
+}
+
+static void rosaudiosrc_finalize(GObject * object)
+{
+  Rosaudiosrc * src = GST_ROSAUDIOSRC(object);
+  delete src->priv;
+  src->priv = nullptr;
+  g_free(src->sub_topic);
+  g_free(src->frame_id);
+  g_free(src->encoding);
+  g_free(src->init_caps);
+  G_OBJECT_CLASS(rosaudiosrc_parent_class)->finalize(object);
 }
 
 void rosaudiosrc_set_property(
@@ -298,7 +320,7 @@ static gboolean rosaudiosrc_open(RosBaseSrc * ros_base_src)
   auto cb = [src](audio_msgs::msg::Audio::ConstSharedPtr msg) { rosaudiosrc_sub_cb(src, msg); };
   rclcpp::QoS qos = rclcpp::SensorDataQoS();  //XXX add a parameter for overrides
 
-  src->sub = rclcpp::create_subscription<audio_msgs::msg::Audio>(
+  src->priv->sub = rclcpp::create_subscription<audio_msgs::msg::Audio>(
     ros_base_src->node_if->parameters, ros_base_src->node_if->topics, src->sub_topic, qos, cb);
 
   return TRUE;
@@ -311,10 +333,10 @@ static gboolean rosaudiosrc_close(RosBaseSrc * ros_base_src)
 
   GST_DEBUG_OBJECT(src, "close");
 
-  src->sub.reset();
-  std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
-  while (src->msg_queue.size() > 0) {
-    src->msg_queue.pop();
+  src->priv->sub.reset();
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  while (src->priv->msg_queue.size() > 0) {
+    src->priv->msg_queue.pop();
   }
 
   return TRUE;
@@ -482,8 +504,8 @@ static GstFlowReturn rosaudiosrc_create(
 
   auto msg = rosaudiosrc_wait_for_msg(src);
   {  //scope the mutex lock
-    std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
-    src->msg_queue.pop();
+    std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+    src->priv->msg_queue.pop();
   }
   // XXX check sequence number and pad the buffer
 
@@ -566,13 +588,13 @@ static void rosaudiosrc_sub_cb(Rosaudiosrc * src, audio_msgs::msg::Audio::ConstS
         GST_AUDIO_INFO_LAYOUT(&(src->audio_info)), msg->layout);
   }
 
-  std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
-  src->msg_queue.push(msg);
-  while (src->msg_queue.size() > src->msg_queue_max) {
-    src->msg_queue.pop();
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  src->priv->msg_queue.push(msg);
+  while (src->priv->msg_queue.size() > src->msg_queue_max) {
+    src->priv->msg_queue.pop();
     RCLCPP_WARN(ros_base_src->node_if->logging->get_logger(), "dropping message");
   }
-  src->msg_queue_cv.notify_one();
+  src->priv->msg_queue_cv.notify_one();
 }
 
 static audio_msgs::msg::Audio::ConstSharedPtr rosaudiosrc_wait_for_msg(Rosaudiosrc * src)
@@ -581,11 +603,11 @@ static audio_msgs::msg::Audio::ConstSharedPtr rosaudiosrc_wait_for_msg(Rosaudios
 
   GST_DEBUG_OBJECT(src, "wait for msg");
 
-  std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
-  while (src->msg_queue.empty()) {
-    src->msg_queue_cv.wait(lck);
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  while (src->priv->msg_queue.empty()) {
+    src->priv->msg_queue_cv.wait(lck);
   }
-  auto msg = src->msg_queue.front();
+  auto msg = src->priv->msg_queue.front();
 
   return msg;
 }

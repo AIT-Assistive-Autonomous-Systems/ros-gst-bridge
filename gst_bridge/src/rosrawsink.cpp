@@ -34,11 +34,18 @@
 GST_DEBUG_CATEGORY_STATIC(rosrawsink_debug_category);
 #define GST_CAT_DEFAULT rosrawsink_debug_category
 
+struct RosrawsinkPrivate
+{
+  using MsgType = Rosrawsink::MsgType;
+  rclcpp::Publisher<MsgType>::SharedPtr pub;
+};
+
 static void rosrawsink_set_property(
   GObject * object, guint property_id, const GValue * value, GParamSpec * pspec);
 static void rosrawsink_get_property(
   GObject * object, guint property_id, GValue * value, GParamSpec * pspec);
 static void rosrawsink_init(Rosrawsink * sink);
+static void rosrawsink_finalize(GObject * object);
 static gboolean rosrawsink_open(RosBaseSink * ros_base_sink);
 static gboolean rosrawsink_close(RosBaseSink * ros_base_sink);
 static GstFlowReturn rosrawsink_render(
@@ -61,6 +68,7 @@ static void rosrawsink_class_init(RosrawsinkClass * klass)
 
   object_class->set_property = rosrawsink_set_property;
   object_class->get_property = rosrawsink_get_property;
+  object_class->finalize = rosrawsink_finalize;
 
   gst_element_class_add_static_pad_template(element_class, &rosrawsink_sink_template);
 
@@ -81,9 +89,20 @@ static void rosrawsink_class_init(RosrawsinkClass * klass)
 
 static void rosrawsink_init(Rosrawsink * sink)
 {
+  sink->priv = new RosrawsinkPrivate();
   RosBaseSink * ros_base_sink = GST_ROS_BASE_SINK(sink);
+  g_free(ros_base_sink->node_name);  // set by the base class init
   ros_base_sink->node_name = g_strdup("gst_raw_sink_node");
   sink->pub_topic = g_strdup("gst_raw_pub");
+}
+
+static void rosrawsink_finalize(GObject * object)
+{
+  Rosrawsink * sink = GST_ROSRAWSINK(object);
+  delete sink->priv;
+  sink->priv = nullptr;
+  g_free(sink->pub_topic);
+  G_OBJECT_CLASS(rosrawsink_parent_class)->finalize(object);
 }
 
 static void rosrawsink_set_property(
@@ -130,7 +149,7 @@ static gboolean rosrawsink_open(RosBaseSink * ros_base_sink)
   Rosrawsink * sink = GST_ROSRAWSINK(ros_base_sink);
   rclcpp::QoS qos = rclcpp::SensorDataQoS();
 
-  sink->pub = rclcpp::create_publisher<Rosrawsink::MsgType>(
+  sink->priv->pub = rclcpp::create_publisher<Rosrawsink::MsgType>(
     ros_base_sink->node_if->parameters, ros_base_sink->node_if->topics, sink->pub_topic, qos);
 
   return TRUE;
@@ -140,7 +159,7 @@ static gboolean rosrawsink_close(RosBaseSink * ros_base_sink)
 {
   Rosrawsink * sink = GST_ROSRAWSINK(ros_base_sink);
   GST_DEBUG_OBJECT(sink, "close");
-  sink->pub.reset();
+  sink->priv->pub.reset();
   return TRUE;
 }
 
@@ -159,7 +178,7 @@ static GstFlowReturn rosrawsink_render(RosBaseSink * ros_base_sink, GstBuffer * 
   msg.data = std::vector<uint8_t>(info.data, info.data + info.size);
   gst_buffer_unmap(buf, &info);
 
-  sink->pub->publish(msg);
+  sink->priv->pub->publish(msg);
 
   return GST_FLOW_OK;
 }

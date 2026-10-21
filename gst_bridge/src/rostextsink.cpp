@@ -34,6 +34,11 @@
 GST_DEBUG_CATEGORY_STATIC(rostextsink_debug_category);
 #define GST_CAT_DEFAULT rostextsink_debug_category
 
+struct RostextsinkPrivate
+{
+  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub;
+};
+
 /* prototypes */
 
 static void rostextsink_set_property(
@@ -42,6 +47,7 @@ static void rostextsink_get_property(
   GObject * object, guint property_id, GValue * value, GParamSpec * pspec);
 
 static void rostextsink_init(Rostextsink * sink);
+static void rostextsink_finalize(GObject * object);
 
 static gboolean rostextsink_open(RosBaseSink * ros_base_sink);
 static gboolean rostextsink_close(RosBaseSink * ros_base_sink);
@@ -76,6 +82,7 @@ static void rostextsink_class_init(RostextsinkClass * klass)
 
   object_class->set_property = rostextsink_set_property;
   object_class->get_property = rostextsink_get_property;
+  object_class->finalize = rostextsink_finalize;
 
   /* Setting up pads and setting metadata should be moved to
      base_class_init if you intend to subclass this class. */
@@ -102,9 +109,20 @@ static void rostextsink_class_init(RostextsinkClass * klass)
 
 static void rostextsink_init(Rostextsink * sink)
 {
+  sink->priv = new RostextsinkPrivate();
   RosBaseSink * ros_base_sink GST_ROS_BASE_SINK(sink);
+  g_free(ros_base_sink->node_name);  // set by the base class init
   ros_base_sink->node_name = g_strdup("gst_text_sink_node");
   sink->pub_topic = g_strdup("gst_text_pub");
+}
+
+static void rostextsink_finalize(GObject * object)
+{
+  Rostextsink * sink = GST_ROSTEXTSINK(object);
+  delete sink->priv;
+  sink->priv = nullptr;
+  g_free(sink->pub_topic);
+  G_OBJECT_CLASS(rostextsink_parent_class)->finalize(object);
 }
 
 void rostextsink_set_property(
@@ -158,7 +176,7 @@ static gboolean rostextsink_open(RosBaseSink * ros_base_sink)
   rclcpp::QoS qos = rclcpp::SensorDataQoS().reliable();  //XXX add a parameter for overrides
   // XXX test for nullptr in ros_base_sink->node_if
 
-  sink->pub = rclcpp::create_publisher<std_msgs::msg::String>(
+  sink->priv->pub = rclcpp::create_publisher<std_msgs::msg::String>(
     ros_base_sink->node_if->parameters, ros_base_sink->node_if->topics, sink->pub_topic, qos);
 
   return TRUE;
@@ -170,7 +188,7 @@ static gboolean rostextsink_close(RosBaseSink * ros_base_sink)
   Rostextsink * sink = GST_ROSTEXTSINK(ros_base_sink);
   GST_DEBUG_OBJECT(sink, "close");
 
-  sink->pub.reset();
+  sink->priv->pub.reset();
 
   return TRUE;
 }
@@ -182,7 +200,7 @@ static GstFlowReturn rostextsink_render(
   std_msgs::msg::String msg;
 
   // XXX use borrowed messages, can buf be extended into the middleware?
-  //    auto msg = sink->pub->borrow_loaned_message();
+  //    auto msg = sink->priv->pub->borrow_loaned_message();
   //    msg.get().frames = ...
 
   Rostextsink * sink = GST_ROSTEXTSINK(ros_base_sink);
@@ -209,7 +227,7 @@ static GstFlowReturn rostextsink_render(
   gst_buffer_unmap(buf, &info);
 
   //publish
-  sink->pub->publish(msg);
+  sink->priv->pub->publish(msg);
 
   return GST_FLOW_OK;
 }

@@ -22,12 +22,22 @@
 GST_DEBUG_CATEGORY_STATIC(rosrawsrc_debug_category);
 #define GST_CAT_DEFAULT rosrawsrc_debug_category
 
+struct RosrawsrcPrivate
+{
+  using MsgType = Rosrawsrc::MsgType;
+  rclcpp::Subscription<MsgType>::SharedPtr sub;
+  std::queue<MsgType::ConstSharedPtr> msg_queue;
+  std::mutex msg_queue_mtx;
+  std::condition_variable msg_queue_cv;
+};
+
 static void rosrawsrc_set_property(
   GObject * object, guint prop_id, const GValue * value, GParamSpec * pspec);
 static void rosrawsrc_get_property(
   GObject * object, guint prop_id, GValue * value, GParamSpec * pspec);
 
 static void rosrawsrc_init(Rosrawsrc * src);
+static void rosrawsrc_finalize(GObject * object);
 static gboolean rosrawsrc_open(RosBaseSrc * ros_base_src);
 static gboolean rosrawsrc_close(RosBaseSrc * ros_base_src);
 static GstFlowReturn rosrawsrc_create(
@@ -61,6 +71,7 @@ static void rosrawsrc_class_init(RosrawsrcClass * klass)
 
   object_class->set_property = rosrawsrc_set_property;
   object_class->get_property = rosrawsrc_get_property;
+  object_class->finalize = rosrawsrc_finalize;
 
   gst_element_class_add_pad_template(
     element_class, gst_static_pad_template_get(&rosrawsrc_src_template));
@@ -96,9 +107,11 @@ static void rosrawsrc_class_init(RosrawsrcClass * klass)
 
 static void rosrawsrc_init(Rosrawsrc * src)
 {
+  src->priv = new RosrawsrcPrivate();
   GST_DEBUG_OBJECT(src, "init");
 
   RosBaseSrc * ros_base_src = GST_ROS_BASE_SRC(src);
+  g_free(ros_base_src->node_name);  // set by the base class init
   ros_base_src->node_name = g_strdup("gst_raw_src_node");
 
   src->silent = FALSE;
@@ -107,7 +120,6 @@ static void rosrawsrc_init(Rosrawsrc * src)
 
   src->started = false;
   src->msg_queue_max = 1;
-  src->msg_queue = std::queue<Rosrawsrc::MsgType::ConstSharedPtr>();
 
   // Configure base src behavior
   gst_base_src_set_live(GST_BASE_SRC(src), TRUE);
@@ -118,6 +130,17 @@ static void rosrawsrc_init(Rosrawsrc * src)
 
   GST_DEBUG_OBJECT(
     src, "rosrawsrc initialized with topic '%s' and caps '%s'", src->sub_topic, src->caps_string);
+}
+
+static void rosrawsrc_finalize(GObject * object)
+{
+  Rosrawsrc * src = GST_ROSRAWSRC(object);
+  delete src->priv;
+  src->priv = nullptr;
+  g_free(src->sub_topic);
+  g_free(src->caps_string);
+  if (src->srcpad) gst_object_unref(src->srcpad);  // ref from gst_element_get_static_pad
+  G_OBJECT_CLASS(rosrawsrc_parent_class)->finalize(object);
 }
 
 static void rosrawsrc_set_property(
@@ -192,7 +215,7 @@ static gboolean rosrawsrc_open(RosBaseSrc * ros_base_src)
 
   GST_DEBUG_OBJECT(src, "subscribing to topic '%s'", src->sub_topic);
 
-  src->sub = rclcpp::create_subscription<Rosrawsrc::MsgType>(
+  src->priv->sub = rclcpp::create_subscription<Rosrawsrc::MsgType>(
     ros_base_src->node_if->parameters, ros_base_src->node_if->topics, src->sub_topic, qos, cb);
 
   return TRUE;
@@ -203,10 +226,10 @@ static gboolean rosrawsrc_close(RosBaseSrc * ros_base_src)
   Rosrawsrc * src = GST_ROSRAWSRC(ros_base_src);
 
   GST_DEBUG_OBJECT(src, "close");
-  src->sub.reset();
-  std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
-  while (!src->msg_queue.empty()) {
-    src->msg_queue.pop();
+  src->priv->sub.reset();
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  while (!src->priv->msg_queue.empty()) {
+    src->priv->msg_queue.pop();
   }
 
   return TRUE;
@@ -280,8 +303,8 @@ static GstFlowReturn rosrawsrc_create(
 
   auto msg = rosrawsrc_wait_for_msg(src);
   {  //scope the mutex lock
-    std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
-    src->msg_queue.pop();  // XXX we can stop dropping the first message during preroll now
+    std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+    src->priv->msg_queue.pop();  // XXX we can stop dropping the first message during preroll now
   }
 
   // XXX check message contains anything
@@ -325,24 +348,24 @@ static GstFlowReturn rosrawsrc_create(
 static void rosrawsrc_sub_cb(Rosrawsrc * src, Rosrawsrc::MsgType::ConstSharedPtr msg)
 {
   RosBaseSrc * ros_base_src = GST_ROS_BASE_SRC(src);
-  std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
-  src->msg_queue.push(msg);
-  while (src->msg_queue.size() > src->msg_queue_max) {
-    src->msg_queue.pop();
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  src->priv->msg_queue.push(msg);
+  while (src->priv->msg_queue.size() > src->msg_queue_max) {
+    src->priv->msg_queue.pop();
     RCLCPP_WARN(ros_base_src->node_if->logging->get_logger(), "dropping message");
   }
-  src->msg_queue_cv.notify_one();
+  src->priv->msg_queue_cv.notify_one();
 }
 
 static Rosrawsrc::MsgType::ConstSharedPtr rosrawsrc_wait_for_msg(Rosrawsrc * src)
 {
   //RosBaseSrc *ros_base_src = GST_ROS_BASE_SRC (src);
 
-  std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
-  while (src->msg_queue.empty()) {
-    src->msg_queue_cv.wait(lck);
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  while (src->priv->msg_queue.empty()) {
+    src->priv->msg_queue_cv.wait(lck);
   }
-  auto msg = src->msg_queue.front();
+  auto msg = src->priv->msg_queue.front();
 
   return msg;
 }

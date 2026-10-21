@@ -41,16 +41,20 @@ G_BEGIN_DECLS
 typedef struct _Rosaudiosink Rosaudiosink;
 typedef struct _RosaudiosinkClass RosaudiosinkClass;
 
+struct RosaudiosinkPrivate;
+
 struct _Rosaudiosink
 {
   RosBaseSink parent;
+
+  // C++ members, defined in the .cpp: allocated with new in _init and deleted in _finalize
+  // (GObject zero allocates instances without running C++ constructors)
+  RosaudiosinkPrivate * priv;
 
   gchar * pub_topic;
   gchar * frame_id;
   gchar * encoding;   //msg encoding override string (for hacking)
   gchar * init_caps;  //a hack to allow skipping preroll
-
-  rclcpp::Publisher<audio_msgs::msg::Audio>::SharedPtr pub;
 
   GstAudioInfo audio_info;
   uint64_t msg_seq_num;

@@ -39,13 +39,17 @@ G_BEGIN_DECLS
 typedef struct _Rostextsink Rostextsink;
 typedef struct _RostextsinkClass RostextsinkClass;
 
+struct RostextsinkPrivate;
+
 struct _Rostextsink
 {
   RosBaseSink parent;
 
-  gchar * pub_topic;
+  // C++ members, defined in the .cpp: allocated with new in _init and deleted in _finalize
+  // (GObject zero allocates instances without running C++ constructors)
+  RostextsinkPrivate * priv;
 
-  rclcpp::Publisher<std_msgs::msg::String>::SharedPtr pub;
+  gchar * pub_topic;
 
   uint64_t msg_seq_num;
 };

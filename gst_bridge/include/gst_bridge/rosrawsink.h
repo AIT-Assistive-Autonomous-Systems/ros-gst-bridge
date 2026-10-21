@@ -38,15 +38,19 @@ G_BEGIN_DECLS
 typedef struct _Rosrawsink Rosrawsink;
 typedef struct _RosrawsinkClass RosrawsinkClass;
 
+struct RosrawsinkPrivate;
+
 struct _Rosrawsink
 {
   using MsgType = gst_msgs::msg::StreamStampedData;
 
   RosBaseSink parent;
 
-  gchar * pub_topic;
+  // C++ members, defined in the .cpp: allocated with new in _init and deleted in _finalize
+  // (GObject zero allocates instances without running C++ constructors)
+  RosrawsinkPrivate * priv;
 
-  rclcpp::Publisher<MsgType>::SharedPtr pub;
+  gchar * pub_topic;
 
   uint64_t msg_seq_num;
 };

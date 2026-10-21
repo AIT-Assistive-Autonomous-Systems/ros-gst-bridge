@@ -34,6 +34,11 @@
 GST_DEBUG_CATEGORY_STATIC(rosaudiosink_debug_category);
 #define GST_CAT_DEFAULT rosaudiosink_debug_category
 
+struct RosaudiosinkPrivate
+{
+  rclcpp::Publisher<audio_msgs::msg::Audio>::SharedPtr pub;
+};
+
 /* prototypes */
 
 static void rosaudiosink_set_property(
@@ -42,6 +47,7 @@ static void rosaudiosink_get_property(
   GObject * object, guint property_id, GValue * value, GParamSpec * pspec);
 
 static void rosaudiosink_init(Rosaudiosink * sink);
+static void rosaudiosink_finalize(GObject * object);
 
 static gboolean rosaudiosink_open(RosBaseSink * ros_base_sink);
 static gboolean rosaudiosink_close(RosBaseSink * ros_base_sink);
@@ -78,6 +84,7 @@ static void rosaudiosink_class_init(RosaudiosinkClass * klass)
 
   object_class->set_property = rosaudiosink_set_property;
   object_class->get_property = rosaudiosink_get_property;
+  object_class->finalize = rosaudiosink_finalize;
 
   /* Setting up pads and setting metadata should be moved to
      base_class_init if you intend to subclass this class. */
@@ -120,11 +127,25 @@ static void rosaudiosink_class_init(RosaudiosinkClass * klass)
 
 static void rosaudiosink_init(Rosaudiosink * sink)
 {
+  sink->priv = new RosaudiosinkPrivate();
   RosBaseSink * ros_base_sink GST_ROS_BASE_SINK(sink);
+  g_free(ros_base_sink->node_name);  // set by the base class init
   ros_base_sink->node_name = g_strdup("gst_audio_sink_node");
   sink->pub_topic = g_strdup("gst_audio_pub");
   sink->frame_id = g_strdup("audio_frame");
   sink->encoding = g_strdup("16SC1");
+}
+
+static void rosaudiosink_finalize(GObject * object)
+{
+  Rosaudiosink * sink = GST_ROSAUDIOSINK(object);
+  delete sink->priv;
+  sink->priv = nullptr;
+  g_free(sink->pub_topic);
+  g_free(sink->frame_id);
+  g_free(sink->encoding);
+  g_free(sink->init_caps);
+  G_OBJECT_CLASS(rosaudiosink_parent_class)->finalize(object);
 }
 
 void rosaudiosink_set_property(
@@ -195,7 +216,7 @@ static gboolean rosaudiosink_open(RosBaseSink * ros_base_sink)
   GST_DEBUG_OBJECT(sink, "open");
   rclcpp::QoS qos = rclcpp::SensorDataQoS().reliable();  //XXX add a parameter for overrides
 
-  sink->pub = rclcpp::create_publisher<audio_msgs::msg::Audio>(
+  sink->priv->pub = rclcpp::create_publisher<audio_msgs::msg::Audio>(
     ros_base_sink->node_if->parameters, ros_base_sink->node_if->topics, sink->pub_topic, qos);
 
   return TRUE;
@@ -207,7 +228,7 @@ static gboolean rosaudiosink_close(RosBaseSink * ros_base_sink)
   Rosaudiosink * sink = GST_ROSAUDIOSINK(ros_base_sink);
   GST_DEBUG_OBJECT(sink, "close");
 
-  sink->pub.reset();
+  sink->priv->pub.reset();
 
   return TRUE;
 }
@@ -247,7 +268,7 @@ static GstFlowReturn rosaudiosink_render(
   audio_msgs::msg::Audio msg;
 
   // XXX use borrowed messages, can buf be extended into the middleware?
-  //    auto msg = sink->pub->borrow_loaned_message();
+  //    auto msg = sink->priv->pub->borrow_loaned_message();
   //    msg.get().frames = ...
 
   Rosaudiosink * sink = GST_ROSAUDIOSINK(ros_base_sink);
@@ -275,7 +296,7 @@ static GstFlowReturn rosaudiosink_render(
   gst_buffer_unmap(buf, &info);
 
   //publish
-  sink->pub->publish(msg);
+  sink->priv->pub->publish(msg);
 
   return GST_FLOW_OK;
 }
