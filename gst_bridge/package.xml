@@ -17,11 +17,15 @@
   <build_depend>std_msgs</build_depend>
   <build_depend>audio_msgs</build_depend>
   <build_depend>sensor_msgs</build_depend>
+  <build_depend>camera_calibration_parsers</build_depend>
+  <build_depend>ament_index_cpp</build_depend>
   <build_depend>ament_cmake_clang_format</build_depend>
 
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>audio_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>camera_calibration_parsers</exec_depend>
+  <exec_depend>ament_index_cpp</exec_depend>
   <exec_depend>gstreamer1.0</exec_depend>
   <exec_depend>gstreamer1.0-plugins-base</exec_depend>
   <exec_depend>gstreamer1.0-plugins-good</exec_depend>

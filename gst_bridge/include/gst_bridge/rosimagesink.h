@@ -21,6 +21,7 @@
 
 #include <gst/base/gstbasesink.h>
 #include <gst/video/video-format.h>
+#include <gst_bridge/camera_info.h>
 #include <gst_bridge/gst_bridge.h>
 #include <gst_bridge/rosbasesink.h>
 
@@ -51,6 +52,9 @@ struct _Rosimagesink
   gchar * init_caps;  //optional caps override (used for limited apis)
 
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub;
+
+  // constructed in rosimagesink_init, destroyed in rosimagesink_finalize
+  gst_bridge::CameraInfoSettings camera_info;
 
   int height;
   int width;

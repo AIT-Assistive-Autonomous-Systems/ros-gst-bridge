@@ -23,6 +23,8 @@
 #include <gst/gst.h>
 #include <gst_bridge/rosaudiosink.h>
 #include <gst_bridge/rosaudiosrc.h>
+#include <gst_bridge/roscompressedimagesink.h>
+#include <gst_bridge/roscompressedimagesrc.h>
 #include <gst_bridge/rosimagesink.h>
 #include <gst_bridge/rosimagesrc.h>
 #include <gst_bridge/rosrawsink.h>
@@ -39,6 +41,9 @@ static gboolean plugin_init(GstPlugin * plugin)
 
   gst_element_register(plugin, "rosimagesink", GST_RANK_NONE, GST_TYPE_ROSIMAGESINK);
 
+  gst_element_register(
+    plugin, "roscompressedimagesink", GST_RANK_NONE, GST_TYPE_ROSCOMPRESSEDIMAGESINK);
+
   gst_element_register(plugin, "rostextsink", GST_RANK_NONE, GST_TYPE_ROSTEXTSINK);
 
   gst_element_register(plugin, "rosrawsink", GST_RANK_NONE, GST_TYPE_ROSRAWSINK);
@@ -46,6 +51,9 @@ static gboolean plugin_init(GstPlugin * plugin)
   gst_element_register(plugin, "rosaudiosrc", GST_RANK_NONE, GST_TYPE_ROSAUDIOSRC);
 
   gst_element_register(plugin, "rosimagesrc", GST_RANK_NONE, GST_TYPE_ROSIMAGESRC);
+
+  gst_element_register(
+    plugin, "roscompressedimagesrc", GST_RANK_NONE, GST_TYPE_ROSCOMPRESSEDIMAGESRC);
 
   gst_element_register(plugin, "rostextsrc", GST_RANK_NONE, GST_TYPE_ROSTEXTSRC);
 

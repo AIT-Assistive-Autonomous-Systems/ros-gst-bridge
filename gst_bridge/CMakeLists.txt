@@ -49,6 +49,8 @@ find_package(GLIB REQUIRED COMPONENTS ${glib_components})
 find_package(std_msgs REQUIRED)
 find_package(audio_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(camera_calibration_parsers REQUIRED)
+find_package(ament_index_cpp REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(gst_msgs REQUIRED)
 
@@ -61,6 +63,7 @@ find_package(gst_msgs REQUIRED)
 # XXX this lib build needs pruning
 add_library(gst_bridge SHARED
   src/gst_bridge.cpp
+  src/camera_info.cpp
   src/rosbaseiface.cpp
   src/rosbasesink.cpp
   src/rosbasesrc.cpp
@@ -80,6 +83,8 @@ target_link_libraries(gst_bridge PUBLIC
   ${sensor_msgs_LIBRARIES}
   ${audio_msgs_LIBRARIES}
   ${gst_msgs_LIBRARIES}
+  camera_calibration_parsers::camera_calibration_parsers
+  ament_index_cpp::ament_index_cpp
   ${GLIB_LIBRARIES}
   ${GLIB_GIO_LIBRARIES}
   PkgConfig::gstreamer
@@ -98,6 +103,8 @@ add_library(rosgstbridge SHARED
   src/rosgstbridgeplugin.cpp
   src/rosaudiosink.cpp
   src/rosimagesink.cpp
+  src/roscompressedimagesink.cpp
+  src/roscompressedimagesrc.cpp
   src/rostextsink.cpp
   src/rosaudiosrc.cpp
   src/rosimagesrc.cpp
@@ -161,6 +168,8 @@ ament_export_dependencies(
   rclcpp
   audio_msgs
   sensor_msgs
+  camera_calibration_parsers
+  ament_index_cpp
 )
 
 ament_package(
