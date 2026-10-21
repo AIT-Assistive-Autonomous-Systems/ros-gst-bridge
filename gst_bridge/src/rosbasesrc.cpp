@@ -44,6 +44,7 @@ static void rosbasesrc_get_property(
 static GstStateChangeReturn rosbasesrc_change_state(
   GstElement * element, GstStateChange transition);
 static void rosbasesrc_init(RosBaseSrc * src);
+static void rosbasesrc_finalize(GObject * object);
 
 static gboolean rosbasesrc_open(RosBaseSrc * src);
 static gboolean rosbasesrc_close(RosBaseSrc * src);
@@ -97,6 +98,7 @@ static void rosbasesrc_class_init(RosBaseSrcClass * klass)
 
   object_class->set_property = rosbasesrc_set_property;
   object_class->get_property = rosbasesrc_get_property;
+  object_class->finalize = rosbasesrc_finalize;
 
   gst_element_class_set_static_metadata(
     element_class, "rosbasesrc", "Source",
@@ -150,12 +152,38 @@ static void rosbasesrc_class_init(RosBaseSrcClass * klass)
 
 static void rosbasesrc_init(RosBaseSrc * src)
 {
+  // GObject zero allocates the instance and runs no C++ constructors,
+  // construct the C++ members in place, they are destroyed in rosbasesrc_finalize
+  new (&src->local_node) RosBaseImp();
+  new (&src->node_if) std::shared_ptr<gst_bridge::node_interface_collection>();
+  new (&src->stream_start) rclcpp::Time();
   src->node_name = g_strdup("ros_base_src_node");
   src->node_namespace = g_strdup("");
   src->stream_start_prop = GST_CLOCK_TIME_NONE;
   src->time_caps = g_strdup("timestamp/x-rostime");
   src->attach_reference_timestamp = false;
   src->timestamp_mode = SRC_TIMESTAMP_MODE_ROS_OFFSET;
+}
+
+static void rosbasesrc_finalize(GObject * object)
+{
+  RosBaseSrc * src = GST_ROS_BASE_SRC(object);
+  using NodeIfPtr = std::shared_ptr<gst_bridge::node_interface_collection>;
+
+  // normally closed on READY_TO_NULL, a joinable spin thread would std::terminate
+  if (src->local_node.node) {
+    src->node_if.reset();  // like close: the local node's interfaces go before the node
+    rosbaseimp_close(&(src->local_node));
+  }
+
+  src->stream_start.~Time();
+  src->node_if.~NodeIfPtr();  // releases an injected host node (gst_pipeline bridge plugin)
+  src->local_node.~RosBaseImp();
+  g_free(src->node_name);
+  g_free(src->node_namespace);
+  g_free(src->time_caps);
+
+  G_OBJECT_CLASS(rosbasesrc_parent_class)->finalize(object);
 }
 
 void rosbasesrc_set_property(

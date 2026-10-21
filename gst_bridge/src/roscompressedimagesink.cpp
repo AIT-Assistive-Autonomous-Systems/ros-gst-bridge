@@ -156,31 +156,15 @@ static void roscompressedimagesink_class_init(RoscompressedimagesinkClass * klas
 static void roscompressedimagesink_init(Roscompressedimagesink * sink)
 {
   RosBaseSink * ros_base_sink GST_ROS_BASE_SINK(sink);
+  g_free(ros_base_sink->node_name);  // set by the base class init
   ros_base_sink->node_name = g_strdup("gst_compressed_image_sink_node");
-  // the instance is zero allocated by GObject, construct the C++ members in place
-  new (&sink->pub_topic) std::string("gst_image_pub");
-  new (&sink->transport) std::string("compressed");
-  new (&sink->frame_id) std::string("image_frame");
-  new (&sink->format) std::string();
-  new (&sink->caps_format) std::string();
-  new (&sink->pub) rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr();
-  new (&sink->camera_info) gst_bridge::CameraInfoSettings();
-  sink->width = 0;
-  sink->height = 0;
+  new (&sink->priv) RoscompressedimagesinkPrivate();
 }
 
 static void roscompressedimagesink_finalize(GObject * object)
 {
   Roscompressedimagesink * sink = GST_ROSCOMPRESSEDIMAGESINK(object);
-  using std::string;
-  using PublisherPtr = rclcpp::Publisher<sensor_msgs::msg::CompressedImage>::SharedPtr;
-  sink->pub_topic.~string();
-  sink->transport.~string();
-  sink->frame_id.~string();
-  sink->format.~string();
-  sink->caps_format.~string();
-  sink->pub.~PublisherPtr();
-  sink->camera_info.~CameraInfoSettings();
+  sink->priv.~RoscompressedimagesinkPrivate();
   G_OBJECT_CLASS(roscompressedimagesink_parent_class)->finalize(object);
 }
 
@@ -194,36 +178,36 @@ void roscompressedimagesink_set_property(
 
   switch (property_id) {
     case PROP_ROS_TOPIC:
-      if (sink->pub) {
+      if (sink->priv.pub) {
         RCLCPP_ERROR(
           ros_base_sink->node_if->logging->get_logger(), "can't change topic name once opened");
       } else {
-        sink->pub_topic = gst_bridge::value_to_string(value);
+        sink->priv.pub_topic = gst_bridge::value_to_string(value);
       }
       break;
 
     case PROP_ROS_TRANSPORT:
-      if (sink->pub) {
+      if (sink->priv.pub) {
         RCLCPP_ERROR(
           ros_base_sink->node_if->logging->get_logger(), "can't change transport once opened");
       } else {
-        sink->transport = gst_bridge::value_to_string(value);
+        sink->priv.transport = gst_bridge::value_to_string(value);
       }
       break;
 
     case PROP_ROS_FRAME_ID:
-      sink->frame_id = gst_bridge::value_to_string(value);
+      sink->priv.frame_id = gst_bridge::value_to_string(value);
       break;
 
     case PROP_ROS_FORMAT:
-      sink->format = gst_bridge::value_to_string(value);
+      sink->priv.format = gst_bridge::value_to_string(value);
       break;
 
     case PROP_CAMERA_INFO_URL:
-      sink->camera_info.url = gst_bridge::value_to_string(value);
-      if (sink->camera_info.publisher) {
-        sink->camera_info.publisher->load(sink->camera_info.url);
-      } else if (sink->pub && !sink->camera_info.url.empty()) {
+      sink->priv.camera_info.url = gst_bridge::value_to_string(value);
+      if (sink->priv.camera_info.publisher) {
+        sink->priv.camera_info.publisher->load(sink->priv.camera_info.url);
+      } else if (sink->priv.pub && !sink->priv.camera_info.url.empty()) {
         RCLCPP_ERROR(
           ros_base_sink->node_if->logging->get_logger(),
           "can't enable camera info once opened, set camera-info-url before starting");
@@ -231,19 +215,19 @@ void roscompressedimagesink_set_property(
       break;
 
     case PROP_CAMERA_INFO_TOPIC:
-      if (sink->pub) {
+      if (sink->priv.pub) {
         RCLCPP_ERROR(
           ros_base_sink->node_if->logging->get_logger(),
           "can't change camera info topic once opened");
       } else {
-        sink->camera_info.topic = gst_bridge::value_to_string(value);
+        sink->priv.camera_info.topic = gst_bridge::value_to_string(value);
       }
       break;
 
     case PROP_CAMERA_INFO_FRAME_ID:
-      sink->camera_info.frame_id = gst_bridge::value_to_string(value);
-      if (sink->camera_info.publisher)
-        sink->camera_info.publisher->set_frame_id(sink->camera_info.frame_id);
+      sink->priv.camera_info.frame_id = gst_bridge::value_to_string(value);
+      if (sink->priv.camera_info.publisher)
+        sink->priv.camera_info.publisher->set_frame_id(sink->priv.camera_info.frame_id);
       break;
 
     default:
@@ -260,31 +244,31 @@ void roscompressedimagesink_get_property(
   GST_DEBUG_OBJECT(sink, "get_property");
   switch (property_id) {
     case PROP_ROS_TOPIC:
-      g_value_set_string(value, sink->pub_topic.c_str());
+      g_value_set_string(value, sink->priv.pub_topic.c_str());
       break;
 
     case PROP_ROS_TRANSPORT:
-      g_value_set_string(value, sink->transport.c_str());
+      g_value_set_string(value, sink->priv.transport.c_str());
       break;
 
     case PROP_ROS_FRAME_ID:
-      g_value_set_string(value, sink->frame_id.c_str());
+      g_value_set_string(value, sink->priv.frame_id.c_str());
       break;
 
     case PROP_ROS_FORMAT:
-      g_value_set_string(value, sink->format.c_str());
+      g_value_set_string(value, sink->priv.format.c_str());
       break;
 
     case PROP_CAMERA_INFO_URL:
-      g_value_set_string(value, sink->camera_info.url.c_str());
+      g_value_set_string(value, sink->priv.camera_info.url.c_str());
       break;
 
     case PROP_CAMERA_INFO_TOPIC:
-      g_value_set_string(value, sink->camera_info.topic.c_str());
+      g_value_set_string(value, sink->priv.camera_info.topic.c_str());
       break;
 
     case PROP_CAMERA_INFO_FRAME_ID:
-      g_value_set_string(value, sink->camera_info.frame_id.c_str());
+      g_value_set_string(value, sink->priv.camera_info.frame_id.c_str());
       break;
 
     default:
@@ -302,28 +286,29 @@ static gboolean roscompressedimagesink_open(RosBaseSink * ros_base_sink)
 
   // like image_transport, ros-topic is the base topic and the transport name is appended,
   // remapping (--ros-args -r) applies to the full <ros-topic>/<ros-transport> name
-  const std::string topic =
-    sink->transport.empty() ? sink->pub_topic : sink->pub_topic + "/" + sink->transport;
-  const std::string info_topic = !sink->camera_info.topic.empty()
-                                   ? sink->camera_info.topic
-                                   : gst_bridge::camera_info_topic_for(sink->pub_topic);
+  const std::string topic = sink->priv.transport.empty()
+                              ? sink->priv.pub_topic
+                              : sink->priv.pub_topic + "/" + sink->priv.transport;
+  const std::string info_topic = !sink->priv.camera_info.topic.empty()
+                                   ? sink->priv.camera_info.topic
+                                   : gst_bridge::camera_info_topic_for(sink->priv.pub_topic);
 
   // e.g. invalid topic names throw, fail the state change instead of aborting the process
   try {
-    sink->pub = rclcpp::create_publisher<sensor_msgs::msg::CompressedImage>(
+    sink->priv.pub = rclcpp::create_publisher<sensor_msgs::msg::CompressedImage>(
       ros_base_sink->node_if->parameters, ros_base_sink->node_if->topics, topic, qos);
 
-    if (!sink->camera_info.url.empty()) {
-      sink->camera_info.publisher = std::make_shared<gst_bridge::CameraInfoPublisher>(
-        ros_base_sink->node_if, info_topic, sink->camera_info.url, qos);
-      sink->camera_info.publisher->set_frame_id(sink->camera_info.frame_id);
+    if (!sink->priv.camera_info.url.empty()) {
+      sink->priv.camera_info.publisher = std::make_shared<gst_bridge::CameraInfoPublisher>(
+        ros_base_sink->node_if, info_topic, sink->priv.camera_info.url, qos);
+      sink->priv.camera_info.publisher->set_frame_id(sink->priv.camera_info.frame_id);
     }
   } catch (const std::exception & e) {
     RCLCPP_ERROR(
       ros_base_sink->node_if->logging->get_logger(), "can't publish on '%s': %s", topic.c_str(),
       e.what());
-    sink->camera_info.publisher.reset();
-    sink->pub.reset();
+    sink->priv.camera_info.publisher.reset();
+    sink->priv.pub.reset();
     return FALSE;
   }
 
@@ -335,8 +320,8 @@ static gboolean roscompressedimagesink_close(RosBaseSink * ros_base_sink)
 {
   Roscompressedimagesink * sink = GST_ROSCOMPRESSEDIMAGESINK(ros_base_sink);
   GST_DEBUG_OBJECT(sink, "close");
-  sink->camera_info.publisher.reset();
-  sink->pub.reset();
+  sink->priv.camera_info.publisher.reset();
+  sink->priv.pub.reset();
   return TRUE;
 }
 
@@ -348,10 +333,10 @@ static gboolean roscompressedimagesink_setcaps(GstBaseSink * gst_base_sink, GstC
 
   GST_DEBUG_OBJECT(sink, "setcaps");
 
-  sink->caps_format = gst_structure_has_name(caps_struct, "image/png") ? "png" : "jpeg";
+  sink->priv.caps_format = gst_structure_has_name(caps_struct, "image/png") ? "png" : "jpeg";
 
-  if (!gst_structure_get_int(caps_struct, "width", &sink->width)) sink->width = 0;
-  if (!gst_structure_get_int(caps_struct, "height", &sink->height)) sink->height = 0;
+  if (!gst_structure_get_int(caps_struct, "width", &sink->priv.width)) sink->priv.width = 0;
+  if (!gst_structure_get_int(caps_struct, "height", &sink->priv.height)) sink->priv.height = 0;
 
   return TRUE;
 }
@@ -366,8 +351,8 @@ static GstFlowReturn roscompressedimagesink_render(
   GST_DEBUG_OBJECT(sink, "render");
 
   msg.header.stamp = msg_time;
-  msg.header.frame_id = sink->frame_id;
-  msg.format = !sink->format.empty() ? sink->format : sink->caps_format;
+  msg.header.frame_id = sink->priv.frame_id;
+  msg.format = !sink->priv.format.empty() ? sink->priv.format : sink->priv.caps_format;
 
   if (!gst_buffer_map(buf, &info, GST_MAP_READ)) {
     GST_ERROR_OBJECT(sink, "Failed to map GstBuffer");
@@ -376,9 +361,9 @@ static GstFlowReturn roscompressedimagesink_render(
   msg.data.assign(info.data, info.data + info.size);
   gst_buffer_unmap(buf, &info);
 
-  sink->pub->publish(msg);
-  if (sink->camera_info.publisher)
-    sink->camera_info.publisher->publish(msg.header, sink->width, sink->height);
+  sink->priv.pub->publish(msg);
+  if (sink->priv.camera_info.publisher)
+    sink->priv.camera_info.publisher->publish(msg.header, sink->priv.width, sink->priv.height);
 
   return GST_FLOW_OK;
 }

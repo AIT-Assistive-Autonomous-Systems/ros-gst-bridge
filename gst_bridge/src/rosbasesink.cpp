@@ -49,6 +49,7 @@ static void rosbasesink_get_property(
 static GstStateChangeReturn rosbasesink_change_state(
   GstElement * element, GstStateChange transition);
 static void rosbasesink_init(RosBaseSink * rosbasesink);
+static void rosbasesink_finalize(GObject * object);
 
 static GstFlowReturn rosbasesink_render(GstBaseSink * sink, GstBuffer * buffer);
 
@@ -156,6 +157,7 @@ static void rosbasesink_class_init(RosBaseSinkClass * klass)
 
   object_class->set_property = rosbasesink_set_property;
   object_class->get_property = rosbasesink_get_property;
+  object_class->finalize = rosbasesink_finalize;
 
   gst_element_class_set_static_metadata(
     element_class, "rosbasesink", "Sink",
@@ -212,10 +214,36 @@ static void rosbasesink_class_init(RosBaseSinkClass * klass)
 
 static void rosbasesink_init(RosBaseSink * sink)
 {
+  // GObject zero allocates the instance and runs no C++ constructors,
+  // construct the C++ members in place, they are destroyed in rosbasesink_finalize
+  new (&sink->local_node) RosBaseImp();
+  new (&sink->node_if) std::shared_ptr<gst_bridge::node_interface_collection>();
+  new (&sink->stream_start) rclcpp::Time();
   sink->node_name = g_strdup("gst_base_sink_node");
   sink->node_namespace = g_strdup("");
   sink->stream_start_prop = GST_CLOCK_TIME_NONE;
   sink->reference_caps = g_strdup("timestamp/x-unix");
+}
+
+static void rosbasesink_finalize(GObject * object)
+{
+  RosBaseSink * sink = GST_ROS_BASE_SINK(object);
+  using NodeIfPtr = std::shared_ptr<gst_bridge::node_interface_collection>;
+
+  // normally closed on READY_TO_NULL, a joinable spin thread would std::terminate
+  if (sink->local_node.node) {
+    sink->node_if.reset();  // like close: the local node's interfaces go before the node
+    rosbaseimp_close(&(sink->local_node));
+  }
+
+  sink->stream_start.~Time();
+  sink->node_if.~NodeIfPtr();  // releases an injected host node (gst_pipeline bridge plugin)
+  sink->local_node.~RosBaseImp();
+  g_free(sink->node_name);
+  g_free(sink->node_namespace);
+  g_free(sink->reference_caps);
+
+  G_OBJECT_CLASS(rosbasesink_parent_class)->finalize(object);
 }
 
 void rosbasesink_set_property(

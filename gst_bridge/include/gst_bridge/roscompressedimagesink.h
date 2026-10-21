@@ -44,15 +44,14 @@ G_BEGIN_DECLS
 typedef struct _Roscompressedimagesink Roscompressedimagesink;
 typedef struct _RoscompressedimagesinkClass RoscompressedimagesinkClass;
 
-struct _Roscompressedimagesink
+// C++ members: GObject zero allocates the instance and runs no constructors, so they are
+// constructed with one placement new in roscompressedimagesink_init and destroyed in
+// roscompressedimagesink_finalize
+struct RoscompressedimagesinkPrivate
 {
-  RosBaseSink parent;
-
-  // C++ members are constructed in roscompressedimagesink_init
-  // and destroyed in roscompressedimagesink_finalize
-  std::string pub_topic;  //base image topic, published on <pub_topic>/<transport>
-  std::string transport;  //image_transport style topic suffix, none if empty
-  std::string frame_id;
+  std::string pub_topic = "gst_image_pub";  //base image topic, published on <pub_topic>/<transport>
+  std::string transport = "compressed";     //image_transport style topic suffix, none if empty
+  std::string frame_id = "image_frame";
   std::string format;  //compressed image format string override, deduced from the caps if blank
   std::string caps_format;  //format string deduced from the caps
 
@@ -60,8 +59,14 @@ struct _Roscompressedimagesink
 
   gst_bridge::CameraInfoSettings camera_info;
 
-  int height;  //from the caps if known, only used to fill the camera info
-  int width;
+  int height = 0;  //from the caps if known, only used to fill the camera info
+  int width = 0;
+};
+
+struct _Roscompressedimagesink
+{
+  RosBaseSink parent;
+  RoscompressedimagesinkPrivate priv;
 };
 
 struct _RoscompressedimagesinkClass
