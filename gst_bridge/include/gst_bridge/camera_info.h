@@ -62,9 +62,8 @@ private:
   std::string calibration_frame_id_;
 };
 
-// camera info properties of an image sink element
-// GObject instances are zero allocated, construct this with placement new in the
-// element's init and call the destructor in its finalize
+// camera info properties of an image sink element, allocated with new in the element's init
+// and deleted in its finalize (GObject instances run no C++ constructors or destructors)
 struct CameraInfoSettings
 {
   std::string url;       // calibration url or path, camera info is only published if set

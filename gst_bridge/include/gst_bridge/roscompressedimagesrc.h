@@ -45,36 +45,17 @@ G_BEGIN_DECLS
 typedef struct _Roscompressedimagesrc Roscompressedimagesrc;
 typedef struct _RoscompressedimagesrcClass RoscompressedimagesrcClass;
 
-// C++ members: GObject zero allocates the instance and runs no constructors, so they are
-// constructed with one placement new in roscompressedimagesrc_init and destroyed in
-// roscompressedimagesrc_finalize
-struct RoscompressedimagesrcPrivate
-{
-  using MsgType = sensor_msgs::msg::CompressedImage;
-
-  std::string sub_topic =
-    "gst_image_sub";                     //base image topic, subscribed on <sub_topic>/<transport>
-  std::string transport = "compressed";  //image_transport style topic suffix, none if empty
-
-  rclcpp::Subscription<MsgType>::SharedPtr sub;
-
-  // latest messages, guarded by msg_queue_mtx
-  std::deque<MsgType::ConstSharedPtr> msg_queue;
-  std::mutex msg_queue_mtx;
-  std::condition_variable msg_queue_cv;
-  bool flushing = false;  //basesrc unlock, wake up and return from create
-  std::string frame_id;   //of the last message
-  std::string format;     //of the last message
-
-  std::string media_type;  //media type of the caps currently set on the src pad
-};
+// C++ members, defined in the .cpp: allocated with new in _init and deleted in _finalize
+// (GObject zero allocates instances without running C++ constructors, only guarantees 16 byte
+// alignment and limits instances to 64 kB)
+struct RoscompressedimagesrcPrivate;
 
 struct _Roscompressedimagesrc
 {
-  using MsgType = RoscompressedimagesrcPrivate::MsgType;
+  using MsgType = sensor_msgs::msg::CompressedImage;
 
   RosBaseSrc parent;
-  RoscompressedimagesrcPrivate priv;
+  RoscompressedimagesrcPrivate * priv;
 };
 
 struct _RoscompressedimagesrcClass

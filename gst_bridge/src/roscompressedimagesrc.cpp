@@ -37,6 +37,27 @@
 GST_DEBUG_CATEGORY_STATIC(roscompressedimagesrc_debug_category);
 #define GST_CAT_DEFAULT roscompressedimagesrc_debug_category
 
+struct RoscompressedimagesrcPrivate
+{
+  using MsgType = sensor_msgs::msg::CompressedImage;
+
+  std::string sub_topic =
+    "gst_image_sub";                     //base image topic, subscribed on <sub_topic>/<transport>
+  std::string transport = "compressed";  //image_transport style topic suffix, none if empty
+
+  rclcpp::Subscription<MsgType>::SharedPtr sub;
+
+  // latest messages, guarded by msg_queue_mtx
+  std::deque<MsgType::ConstSharedPtr> msg_queue;
+  std::mutex msg_queue_mtx;
+  std::condition_variable msg_queue_cv;
+  bool flushing = false;  //basesrc unlock, wake up and return from create
+  std::string frame_id;   //of the last message
+  std::string format;     //of the last message
+
+  std::string media_type;  //media type of the caps currently set on the src pad
+};
+
 /* prototypes */
 
 static void roscompressedimagesrc_set_property(
@@ -144,7 +165,7 @@ static void roscompressedimagesrc_init(Roscompressedimagesrc * src)
   g_free(ros_base_src->node_name);  // set by the base class init
   ros_base_src->node_name = g_strdup("gst_compressed_image_src_node");
 
-  new (&src->priv) RoscompressedimagesrcPrivate();
+  src->priv = new RoscompressedimagesrcPrivate();
 
   /* configure basesrc to be a live source */
   gst_base_src_set_live(GST_BASE_SRC(src), TRUE);
@@ -157,7 +178,8 @@ static void roscompressedimagesrc_init(Roscompressedimagesrc * src)
 static void roscompressedimagesrc_finalize(GObject * object)
 {
   Roscompressedimagesrc * src = GST_ROSCOMPRESSEDIMAGESRC(object);
-  src->priv.~RoscompressedimagesrcPrivate();
+  delete src->priv;
+  src->priv = nullptr;
   G_OBJECT_CLASS(roscompressedimagesrc_parent_class)->finalize(object);
 }
 
@@ -171,20 +193,20 @@ static void roscompressedimagesrc_set_property(
 
   switch (property_id) {
     case PROP_ROS_TOPIC:
-      if (src->priv.sub) {
+      if (src->priv->sub) {
         RCLCPP_ERROR(
           ros_base_src->node_if->logging->get_logger(), "can't change topic name once opened");
       } else {
-        src->priv.sub_topic = gst_bridge::value_to_string(value);
+        src->priv->sub_topic = gst_bridge::value_to_string(value);
       }
       break;
 
     case PROP_ROS_TRANSPORT:
-      if (src->priv.sub) {
+      if (src->priv->sub) {
         RCLCPP_ERROR(
           ros_base_src->node_if->logging->get_logger(), "can't change transport once opened");
       } else {
-        src->priv.transport = gst_bridge::value_to_string(value);
+        src->priv->transport = gst_bridge::value_to_string(value);
       }
       break;
 
@@ -203,22 +225,22 @@ static void roscompressedimagesrc_get_property(
 
   switch (property_id) {
     case PROP_ROS_TOPIC:
-      g_value_set_string(value, src->priv.sub_topic.c_str());
+      g_value_set_string(value, src->priv->sub_topic.c_str());
       break;
 
     case PROP_ROS_TRANSPORT:
-      g_value_set_string(value, src->priv.transport.c_str());
+      g_value_set_string(value, src->priv->transport.c_str());
       break;
 
     case PROP_ROS_FRAME_ID: {
-      std::unique_lock<std::mutex> lck(src->priv.msg_queue_mtx);
-      g_value_set_string(value, src->priv.frame_id.c_str());
+      std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+      g_value_set_string(value, src->priv->frame_id.c_str());
       break;
     }
 
     case PROP_ROS_FORMAT: {
-      std::unique_lock<std::mutex> lck(src->priv.msg_queue_mtx);
-      g_value_set_string(value, src->priv.format.c_str());
+      std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+      g_value_set_string(value, src->priv->format.c_str());
       break;
     }
 
@@ -240,13 +262,13 @@ static gboolean roscompressedimagesrc_open(RosBaseSrc * ros_base_src)
   };
   rclcpp::QoS qos = rclcpp::SensorDataQoS();  //XXX add a parameter for overrides
 
-  const std::string topic = src->priv.transport.empty()
-                              ? src->priv.sub_topic
-                              : src->priv.sub_topic + "/" + src->priv.transport;
+  const std::string topic = src->priv->transport.empty()
+                              ? src->priv->sub_topic
+                              : src->priv->sub_topic + "/" + src->priv->transport;
 
   // e.g. invalid topic names throw, fail the state change instead of aborting the process
   try {
-    src->priv.sub = rclcpp::create_subscription<Roscompressedimagesrc::MsgType>(
+    src->priv->sub = rclcpp::create_subscription<Roscompressedimagesrc::MsgType>(
       ros_base_src->node_if->parameters, ros_base_src->node_if->topics, topic, qos, cb);
   } catch (const std::exception & e) {
     RCLCPP_ERROR(
@@ -265,11 +287,11 @@ static gboolean roscompressedimagesrc_close(RosBaseSrc * ros_base_src)
 
   GST_DEBUG_OBJECT(src, "close");
 
-  src->priv.sub.reset();
+  src->priv->sub.reset();
 
-  std::unique_lock<std::mutex> lck(src->priv.msg_queue_mtx);
-  src->priv.msg_queue.clear();
-  src->priv.media_type.clear();
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  src->priv->msg_queue.clear();
+  src->priv->media_type.clear();
 
   return TRUE;
 }
@@ -278,7 +300,7 @@ static gboolean roscompressedimagesrc_notify_thread(RosBaseSrc * ros_base_src)
 {
   Roscompressedimagesrc * src = GST_ROSCOMPRESSEDIMAGESRC(ros_base_src);
   GST_DEBUG_OBJECT(src, "notify_thread");
-  src->priv.msg_queue_cv.notify_all();
+  src->priv->msg_queue_cv.notify_all();
   return TRUE;
 }
 
@@ -287,9 +309,9 @@ static gboolean roscompressedimagesrc_unlock(GstBaseSrc * base_src)
 {
   Roscompressedimagesrc * src = GST_ROSCOMPRESSEDIMAGESRC(base_src);
   GST_DEBUG_OBJECT(src, "unlock");
-  std::unique_lock<std::mutex> lck(src->priv.msg_queue_mtx);
-  src->priv.flushing = true;
-  src->priv.msg_queue_cv.notify_all();
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  src->priv->flushing = true;
+  src->priv->msg_queue_cv.notify_all();
   return TRUE;
 }
 
@@ -297,8 +319,8 @@ static gboolean roscompressedimagesrc_unlock_stop(GstBaseSrc * base_src)
 {
   Roscompressedimagesrc * src = GST_ROSCOMPRESSEDIMAGESRC(base_src);
   GST_DEBUG_OBJECT(src, "unlock_stop");
-  std::unique_lock<std::mutex> lck(src->priv.msg_queue_mtx);
-  src->priv.flushing = false;
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  src->priv->flushing = false;
   return TRUE;
 }
 
@@ -351,14 +373,14 @@ static GstFlowReturn roscompressedimagesrc_create(
   GST_DEBUG_OBJECT(src, "create");
 
   {
-    std::unique_lock<std::mutex> lck(src->priv.msg_queue_mtx);
-    src->priv.msg_queue_cv.wait(
-      lck, [src] { return src->priv.flushing || !src->priv.msg_queue.empty(); });
-    if (src->priv.flushing) {
+    std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+    src->priv->msg_queue_cv.wait(
+      lck, [src] { return src->priv->flushing || !src->priv->msg_queue.empty(); });
+    if (src->priv->flushing) {
       return GST_FLOW_FLUSHING;
     }
-    msg = src->priv.msg_queue.front();
-    src->priv.msg_queue.pop_front();
+    msg = src->priv->msg_queue.front();
+    src->priv->msg_queue.pop_front();
   }
 
   const std::string media_type = media_type_for(msg->format);
@@ -368,7 +390,7 @@ static GstFlowReturn roscompressedimagesrc_create(
       (NULL));
     return GST_FLOW_NOT_NEGOTIATED;
   }
-  if (media_type != src->priv.media_type) {
+  if (media_type != src->priv->media_type) {
     GstCaps * caps = gst_caps_new_empty_simple(media_type.c_str());
     gboolean ok = gst_base_src_set_caps(base_src, caps);
     gst_caps_unref(caps);
@@ -377,7 +399,7 @@ static GstFlowReturn roscompressedimagesrc_create(
         src, CORE, NEGOTIATION, ("downstream does not accept %s", media_type.c_str()), (NULL));
       return GST_FLOW_NOT_NEGOTIATED;
     }
-    src->priv.media_type = media_type;
+    src->priv->media_type = media_type;
   }
 
   *buf = gst_buffer_new_memdup(msg->data.data(), msg->data.size());
@@ -392,13 +414,13 @@ static GstFlowReturn roscompressedimagesrc_create(
 static void roscompressedimagesrc_sub_cb(
   Roscompressedimagesrc * src, Roscompressedimagesrc::MsgType::ConstSharedPtr msg)
 {
-  std::unique_lock<std::mutex> lck(src->priv.msg_queue_mtx);
-  src->priv.frame_id = msg->header.frame_id;
-  src->priv.format = msg->format;
-  src->priv.msg_queue.push_back(msg);
-  while (src->priv.msg_queue.size() > msg_queue_max) {
-    src->priv.msg_queue.pop_front();  // keep the latest
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  src->priv->frame_id = msg->header.frame_id;
+  src->priv->format = msg->format;
+  src->priv->msg_queue.push_back(msg);
+  while (src->priv->msg_queue.size() > msg_queue_max) {
+    src->priv->msg_queue.pop_front();  // keep the latest
     GST_DEBUG_OBJECT(src, "dropping message");
   }
-  src->priv.msg_queue_cv.notify_one();
+  src->priv->msg_queue_cv.notify_one();
 }

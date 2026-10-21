@@ -53,8 +53,8 @@ struct _Rosimagesink
 
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr pub;
 
-  // constructed in rosimagesink_init, destroyed in rosimagesink_finalize
-  gst_bridge::CameraInfoSettings camera_info;
+  // allocated with new in rosimagesink_init, deleted in rosimagesink_finalize
+  gst_bridge::CameraInfoSettings * camera_info;
 
   int height;
   int width;
