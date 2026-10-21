@@ -155,7 +155,7 @@ if(BUILD_TESTING)
     find_program(VALGRIND valgrind REQUIRED)
   endif()
 
-  foreach(test_name registration compressed_sink sink_timestamps sources round_trip)
+  foreach(test_name properties compressed_sink sink_timestamps sources round_trip)
     ament_add_ros_isolated_gtest(test_${test_name}
       test/test_${test_name}.cpp
       test/test_main.cpp
