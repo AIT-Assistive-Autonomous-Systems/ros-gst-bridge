@@ -163,13 +163,14 @@ gboolean rosbaseimp_close(RosBaseImp * iface)
 
   GST_DEBUG_OBJECT(iface, "close");
 
+  // stop the executor, then destroy the node (and its rmw entities), then the context
   iface->ros_executor->cancel();
   iface->spin_thread.join();
-
-  iface->ros_context->shutdown("gst closing rosbase");
+  iface->ros_executor.reset();
 
   iface->node.reset();
-  iface->ros_executor.reset();
-  iface->ros_executor.reset();
+
+  iface->ros_context->shutdown("gst closing rosbase");
+  iface->ros_context.reset();
   return result;
 }
