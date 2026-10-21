@@ -145,18 +145,22 @@ if(BUILD_TESTING)
   ament_clang_format(CONFIG_FILE "${CMAKE_SOURCE_DIR}/.clang-format")
 
   # end-to-end tests of the elements: pipelines in the test process talk to a test node,
-  # isolated ROS domain, plugin loaded from the build directory
+  # one executable per area, each in an isolated ROS domain, plugin loaded from the build directory
   find_package(ament_cmake_ros REQUIRED)
-  ament_add_ros_isolated_gtest(test_elements test/test_elements.cpp
-    SKIP_LINKING_MAIN_LIBRARIES
-    TIMEOUT 300
-    ENV
-      GST_PLUGIN_PATH=${CMAKE_CURRENT_BINARY_DIR}
-      GST_REGISTRY=${CMAKE_CURRENT_BINARY_DIR}/test_gst_registry.bin
-      ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
-  )
-  target_link_libraries(test_elements gst_bridge gtest)
-  add_dependencies(test_elements rosgstbridge)
+  foreach(test_name registration compressed_sink sink_timestamps sources round_trip)
+    ament_add_ros_isolated_gtest(test_${test_name}
+      test/test_${test_name}.cpp
+      test/test_main.cpp
+      SKIP_LINKING_MAIN_LIBRARIES
+      TIMEOUT 120
+      ENV
+        GST_PLUGIN_PATH=${CMAKE_CURRENT_BINARY_DIR}
+        GST_REGISTRY=${CMAKE_CURRENT_BINARY_DIR}/test_gst_registry_${test_name}.bin
+        ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+    )
+    target_link_libraries(test_${test_name} gst_bridge gtest)
+    add_dependencies(test_${test_name} rosgstbridge)
+  endforeach()
 endif()
 
 
