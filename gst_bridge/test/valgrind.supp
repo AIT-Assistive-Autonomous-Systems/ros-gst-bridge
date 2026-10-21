@@ -1,0 +1,32 @@
+# valgrind suppressions for the optional valgrind tests (GST_BRIDGE_VALGRIND_TESTS)
+#
+# Only allocations made once per process outside gst_bridge: GLib's library initialisation and
+# the internals of rmw_cyclonedds / Cyclone DDS (node and entity creation). They do not grow with
+# the number of elements, pipelines or messages. Neither library calls back into gst_bridge while
+# allocating, so these entries can not hide leaks of the elements.
+
+{
+   glib_library_init
+   Memcheck:Leak
+   match-leak-kinds: definite
+   fun:malloc
+   fun:g_malloc
+   obj:*/libglib-2.0.so*
+   fun:call_init*
+}
+
+{
+   rmw_cyclonedds_internals
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect
+   ...
+   obj:*/librmw_cyclonedds_cpp.so
+}
+
+{
+   cyclonedds_internals
+   Memcheck:Leak
+   match-leak-kinds: definite,indirect
+   ...
+   obj:*/libddsc.so*
+}

@@ -36,7 +36,7 @@ std::vector<int64_t> sink_stamps(
     mode + " ros-topic=" + base);
   EXPECT_NE(p.set_state(GST_STATE_PLAYING), GST_STATE_CHANGE_FAILURE);
   EXPECT_TRUE(images.wait_for_publisher());
-  for (int i = 0; i < 20 && !images.wait_for(3, 50ms); i++) {
+  for (int i = 0; i < 20 && !images.wait_for(3, scaled(50ms)); i++) {
     GstClockTime t = (i + 1) * 100 * GST_MSECOND;
     if (pts) pts->push_back(t);
     push_buffer(p.element("src"), t, metas);

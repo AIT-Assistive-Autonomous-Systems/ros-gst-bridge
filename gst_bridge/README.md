@@ -69,6 +69,17 @@ original stamps, e.g. after processing:
 
 `gst-launch-1.0 roscompressedimagesrc ros-topic="/cam/image_raw" timestamp-mode=arrival attach-reference-timestamp=true time-caps=timestamp/x-unix ! jpegdec ! videoflip method=horizontal-flip ! jpegenc ! roscompressedimagesink ros-topic="/relay/image_raw" timestamp-mode=reference reference-caps=timestamp/x-unix`
 
+## Testing:
+`colcon test --packages-select gst_bridge` runs end-to-end gtests of the elements (`test/`): pipelines in the
+test process talk to a test node, one executable per area, each in an isolated ROS domain.
+
+Optionally the same tests also run under valgrind (memory errors and definite leaks fail, `test/valgrind.supp`
+holds the one-time leaks of GLib and Cyclone DDS); this takes a few minutes:
+```
+colcon build --packages-select gst_bridge --cmake-args -DGST_BRIDGE_VALGRIND_TESTS=ON
+colcon test --packages-select gst_bridge --ctest-args -R valgrind
+```
+
 ## More complex usage:
 
 This package has some ROS libraries for interacting with the elements in the pipeline, See the related gst_pipeline package for how that works

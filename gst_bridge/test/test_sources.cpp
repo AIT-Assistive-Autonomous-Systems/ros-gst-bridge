@@ -148,9 +148,9 @@ TEST(CompressedSrcShutdown, stops_while_waiting_for_messages)
 {
   Pipeline p("roscompressedimagesrc ros-topic=" + test_topic("nobody") + " ! fakesink");
   ASSERT_NE(p.set_state(GST_STATE_PLAYING), GST_STATE_CHANGE_FAILURE);
-  std::this_thread::sleep_for(300ms);
+  std::this_thread::sleep_for(scaled(300ms));
   auto stopped = std::async(std::launch::async, [&] { return p.set_state(GST_STATE_NULL); });
-  EXPECT_EQ(stopped.wait_for(5s), std::future_status::ready) << "create() did not unlock";
+  EXPECT_EQ(stopped.wait_for(scaled(5s)), std::future_status::ready) << "create() did not unlock";
 }
 
 TEST(ImageSrc, old_stamps_do_not_stall)
@@ -169,7 +169,7 @@ TEST(ImageSrc, old_stamps_do_not_stall)
   msg.data.assign(24, 0x80);
 
   std::vector<GstSample *> samples;
-  auto end = std::chrono::steady_clock::now() + 15s;
+  auto end = std::chrono::steady_clock::now() + scaled(15s);
   for (int i = 0; samples.size() < 3 && std::chrono::steady_clock::now() < end; i++) {
     msg.header.stamp = from_ns(OLD_STAMP_NS + i * 100000000LL);
     pub.publish(msg);

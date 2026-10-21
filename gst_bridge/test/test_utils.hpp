@@ -31,6 +31,7 @@
 
 #include <chrono>
 #include <condition_variable>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <mutex>
@@ -47,6 +48,22 @@ using namespace std::chrono_literals;
 
 // node of the test process, spun by test_main.cpp
 rclcpp::Node::SharedPtr test_node();
+
+// timeouts scale with GST_BRIDGE_TEST_TIME_SCALE, e.g. when running under valgrind
+inline int time_scale()
+{
+  static const int scale = [] {
+    const char * env = std::getenv("GST_BRIDGE_TEST_TIME_SCALE");
+    int value = env ? std::atoi(env) : 1;
+    return value > 0 ? value : 1;
+  }();
+  return scale;
+}
+
+inline std::chrono::milliseconds scaled(std::chrono::milliseconds timeout)
+{
+  return timeout * time_scale();
+}
 
 // 2026-01-01T00:00:00Z, a recording far before the stream start
 inline constexpr int64_t OLD_STAMP_NS = 1767225600LL * 1000000000LL;
@@ -105,13 +122,13 @@ public:
       });
   }
 
-  bool wait_for(size_t n, std::chrono::milliseconds timeout = 10s)
+  bool wait_for(size_t n, std::chrono::milliseconds timeout = scaled(10s))
   {
     std::unique_lock<std::mutex> lck(mtx_);
     return cv_.wait_for(lck, timeout, [&] { return msgs_.size() >= n; });
   }
 
-  bool wait_for_publisher(std::chrono::milliseconds timeout = 10s)
+  bool wait_for_publisher(std::chrono::milliseconds timeout = scaled(10s))
   {
     auto end = std::chrono::steady_clock::now() + timeout;
     while (sub_->get_publisher_count() == 0) {
@@ -236,7 +253,7 @@ public:
   {
     pub_ = test_node()->create_publisher<MsgT>(topic, rclcpp::SensorDataQoS());
   }
-  bool wait_for_subscriber(std::chrono::milliseconds timeout = 10s)
+  bool wait_for_subscriber(std::chrono::milliseconds timeout = scaled(10s))
   {
     auto end = std::chrono::steady_clock::now() + timeout;
     while (pub_->get_subscription_count() == 0) {
@@ -268,7 +285,7 @@ inline std::vector<GstSample *> pull_samples_while_publishing(
   const std::string & format, size_t n, std::vector<int64_t> * published = nullptr)
 {
   std::vector<GstSample *> samples;
-  auto end = std::chrono::steady_clock::now() + 15s;
+  auto end = std::chrono::steady_clock::now() + scaled(15s);
   int64_t stamp = first_stamp_ns;
   while (samples.size() < n && std::chrono::steady_clock::now() < end) {
     pub.publish(compressed_msg(stamp, format));

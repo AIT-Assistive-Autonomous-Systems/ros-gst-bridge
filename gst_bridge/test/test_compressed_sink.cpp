@@ -34,6 +34,9 @@ struct CameraInfoCase
   std::string expected_frame;
 };
 
+// gtest would otherwise print the raw bytes of the struct (uninitialised padding)
+void PrintTo(const CameraInfoCase & c, std::ostream * os) { *os << c.name; }
+
 class CompressedSinkCameraInfo : public ::testing::TestWithParam<CameraInfoCase>
 {
 };
@@ -56,7 +59,8 @@ TEST_P(CompressedSinkCameraInfo, frame_and_stamps)
   ASSERT_TRUE(images.wait_for_publisher());
   ASSERT_TRUE(infos.wait_for_publisher());
 
-  for (int i = 0; i < 20 && !(images.wait_for(3, 50ms) && infos.wait_for(3, 0ms)); i++) {
+  for (int i = 0; i < 20 && !(images.wait_for(3, scaled(50ms)) && infos.wait_for(3, scaled(0ms)));
+       i++) {
     push_buffer(p.element("src"), i * 100 * GST_MSECOND);
   }
   ASSERT_TRUE(images.wait_for(3));
@@ -98,7 +102,7 @@ TEST(CompressedSink, no_camera_info_without_url)
     base);
   ASSERT_NE(p.set_state(GST_STATE_PLAYING), GST_STATE_CHANGE_FAILURE);
   ASSERT_TRUE(images.wait_for_publisher());
-  for (int i = 0; i < 20 && !images.wait_for(2, 50ms); i++) {
+  for (int i = 0; i < 20 && !images.wait_for(2, scaled(50ms)); i++) {
     push_buffer(p.element("src"), i * 100 * GST_MSECOND);
   }
   ASSERT_TRUE(images.wait_for(2));
@@ -117,11 +121,11 @@ TEST(CompressedSink, no_camera_info_if_calibration_fails)
     base);
   ASSERT_NE(p.set_state(GST_STATE_PLAYING), GST_STATE_CHANGE_FAILURE);
   ASSERT_TRUE(images.wait_for_publisher());
-  for (int i = 0; i < 20 && !images.wait_for(3, 50ms); i++) {
+  for (int i = 0; i < 20 && !images.wait_for(3, scaled(50ms)); i++) {
     push_buffer(p.element("src"), i * 100 * GST_MSECOND);
   }
   ASSERT_TRUE(images.wait_for(3));
-  std::this_thread::sleep_for(200ms);
+  std::this_thread::sleep_for(scaled(200ms));
   EXPECT_TRUE(infos.msgs().empty());
 }
 
@@ -138,7 +142,7 @@ TEST(CompressedSink, transport_suffix)
     g_object_set(p.element("sink"), "ros-transport", transport.c_str(), nullptr);
     ASSERT_NE(p.set_state(GST_STATE_PLAYING), GST_STATE_CHANGE_FAILURE);
     ASSERT_TRUE(images.wait_for_publisher()) << "transport '" << transport << "'";
-    for (int i = 0; i < 20 && !images.wait_for(1, 50ms); i++) {
+    for (int i = 0; i < 20 && !images.wait_for(1, scaled(50ms)); i++) {
       push_buffer(p.element("src"), i * 100 * GST_MSECOND);
     }
     EXPECT_TRUE(images.wait_for(1)) << "transport '" << transport << "'";

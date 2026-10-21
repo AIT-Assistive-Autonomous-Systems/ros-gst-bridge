@@ -39,7 +39,7 @@ TEST(RoundTrip, reference_stamps_survive_the_pipeline)
   ASSERT_TRUE(relayed.wait_for_publisher());
 
   std::set<int64_t> published;
-  for (int i = 0; i < 100 && !relayed.wait_for(5, 50ms); i++) {
+  for (int i = 0; i < 100 && !relayed.wait_for(5, scaled(50ms)); i++) {
     int64_t stamp = OLD_STAMP_NS + i * 100000000LL;
     published.insert(stamp);
     pub.publish(compressed_msg(stamp, "jpeg"));

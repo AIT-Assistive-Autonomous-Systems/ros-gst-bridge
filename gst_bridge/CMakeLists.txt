@@ -147,6 +147,14 @@ if(BUILD_TESTING)
   # end-to-end tests of the elements: pipelines in the test process talk to a test node,
   # one executable per area, each in an isolated ROS domain, plugin loaded from the build directory
   find_package(ament_cmake_ros REQUIRED)
+
+  # optional: the same tests under valgrind, memory errors and definite leaks fail
+  # (test/valgrind.supp holds the one-time leaks outside gst_bridge), slow
+  option(GST_BRIDGE_VALGRIND_TESTS "also run the element tests under valgrind" OFF)
+  if(GST_BRIDGE_VALGRIND_TESTS)
+    find_program(VALGRIND valgrind REQUIRED)
+  endif()
+
   foreach(test_name registration compressed_sink sink_timestamps sources round_trip)
     ament_add_ros_isolated_gtest(test_${test_name}
       test/test_${test_name}.cpp
@@ -160,6 +168,25 @@ if(BUILD_TESTING)
     )
     target_link_libraries(test_${test_name} gst_bridge gtest)
     add_dependencies(test_${test_name} rosgstbridge)
+
+    if(GST_BRIDGE_VALGRIND_TESTS)
+      ament_add_test(valgrind_test_${test_name}
+        GENERATE_RESULT_FOR_RETURN_CODE_ZERO
+        RUNNER "${ament_cmake_ros_DIR}/run_test_isolated.py"
+        COMMAND ${VALGRIND} --error-exitcode=99 --leak-check=full --errors-for-leak-kinds=definite
+          --keep-debuginfo=yes --num-callers=50
+          --suppressions=${CMAKE_CURRENT_SOURCE_DIR}/test/valgrind.supp
+          $<TARGET_FILE:test_${test_name}>
+        TIMEOUT 1800
+        ENV
+          GST_PLUGIN_PATH=${CMAKE_CURRENT_BINARY_DIR}
+          GST_REGISTRY=${CMAKE_CURRENT_BINARY_DIR}/test_gst_registry_valgrind_${test_name}.bin
+          ROS_AUTOMATIC_DISCOVERY_RANGE=LOCALHOST
+          GST_BRIDGE_TEST_TIME_SCALE=20
+          G_SLICE=always-malloc
+          G_DEBUG=gc-friendly
+      )
+    endif()
   endforeach()
 endif()
 
