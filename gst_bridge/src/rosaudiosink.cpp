@@ -230,7 +230,7 @@ static gboolean rosaudiosink_setcaps(GstBaseSink * gst_base_sink, GstCaps * caps
   if (ros_base_sink->node_if)
     RCLCPP_INFO(
       ros_base_sink->node_if->logging->get_logger(), "preparing audio with caps '%s'",
-      gst_caps_to_string(caps));
+      gst_bridge::caps_to_string(caps).c_str());
 
   if (gst_audio_info_from_caps(&audio_info, caps)) {
     sink->audio_info = audio_info;

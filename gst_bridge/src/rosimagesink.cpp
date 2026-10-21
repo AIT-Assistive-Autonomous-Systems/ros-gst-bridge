@@ -334,7 +334,7 @@ static gboolean rosimagesink_setcaps(GstBaseSink * gst_base_sink, GstCaps * caps
   if (ros_base_sink->node_if)
     RCLCPP_INFO(
       ros_base_sink->node_if->logging->get_logger(), "preparing video with caps '%s'",
-      gst_caps_to_string(caps));
+      gst_bridge::caps_to_string(caps).c_str());
 
   caps_struct = gst_caps_get_structure(caps, 0);
   if (!gst_structure_get_int(caps_struct, "width", &width))

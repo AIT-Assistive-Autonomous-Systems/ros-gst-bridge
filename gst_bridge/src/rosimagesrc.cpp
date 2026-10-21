@@ -65,7 +65,7 @@ static void rosimagesrc_set_msg_props_from_caps_string(Rosimagesrc * src, gchar 
 static void rosimagesrc_set_msg_props_from_msg(
   Rosimagesrc * src, sensor_msgs::msg::Image::ConstSharedPtr msg);
 static void rosimagesrc_set_msg_props(
-  Rosimagesrc * src, int width, int height, size_t step, gint endianness, gchar * encoding);
+  Rosimagesrc * src, int width, int height, size_t step, gint endianness, const gchar * encoding);
 
 enum {
   PROP_0,
@@ -266,6 +266,8 @@ static void rosimagesrc_set_msg_props_from_caps_string(Rosimagesrc * src, gchar 
     encoding = NULL;
   }
   rosimagesrc_set_msg_props(src, width, height, step, endianness, encoding);
+  g_free(encoding);  // set_msg_props keeps its own copy
+  if (caps) gst_caps_unref(caps);
 }
 static void rosimagesrc_set_msg_props_from_msg(
   Rosimagesrc * src, sensor_msgs::msg::Image::ConstSharedPtr msg)
@@ -274,13 +276,12 @@ static void rosimagesrc_set_msg_props_from_msg(
   int height = msg->height;
   size_t step = msg->step / msg->width;
   gint endianness = (msg->is_bigendian ? G_BIG_ENDIAN : G_LITTLE_ENDIAN);
-  gchar * encoding = g_strdup(msg->encoding.c_str());
-
-  rosimagesrc_set_msg_props(src, width, height, step, endianness, encoding);
+  // set_msg_props keeps its own copy
+  rosimagesrc_set_msg_props(src, width, height, step, endianness, msg->encoding.c_str());
 }
 
 static void rosimagesrc_set_msg_props(
-  Rosimagesrc * src, int width, int height, size_t step, gint endianness, gchar * encoding)
+  Rosimagesrc * src, int width, int height, size_t step, gint endianness, const gchar * encoding)
 {
   src->width = width;
   src->height = height;
@@ -378,7 +379,7 @@ static GstCaps * rosimagesrc_fixate(GstBaseSrc * base_src, GstCaps * caps)
   if (ros_base_src->node_if)
     RCLCPP_INFO(
       ros_base_src->node_if->logging->get_logger(), "preparing video with caps '%s'",
-      gst_caps_to_string(caps));
+      gst_bridge::caps_to_string(caps).c_str());
 
   return caps;
 }
@@ -400,7 +401,7 @@ static GstCaps * rosimagesrc_getcaps(GstBaseSrc * base_src, GstCaps * filter)
   if (ros_base_src->node_if)
     RCLCPP_INFO(
       ros_base_src->node_if->logging->get_logger(), "getcaps with filter '%s'",
-      gst_caps_to_string(filter));
+      gst_bridge::caps_to_string(filter).c_str());
 
   // if init_caps is not set, we wait for the first message
   // if init_caps is set, we don't wait
@@ -434,7 +435,8 @@ static GstCaps * rosimagesrc_getcaps(GstBaseSrc * base_src, GstCaps * filter)
     return caps;
   } else {
     caps = gst_caps_from_string(src->init_caps);
-    GST_DEBUG_OBJECT(src, "getcaps returning %s from init_caps", gst_caps_to_string(caps));
+    GST_DEBUG_OBJECT(
+      src, "getcaps returning %s from init_caps", gst_bridge::caps_to_string(caps).c_str());
     return caps;
   }
 }

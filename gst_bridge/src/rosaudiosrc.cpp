@@ -236,6 +236,7 @@ static void rosaudiosrc_set_msg_props_from_caps_string(Rosaudiosrc * src, gchar 
   if (gst_audio_info_from_caps(&audio_info, caps)) {
     src->audio_info = audio_info;
   }
+  if (caps) gst_caps_unref(caps);
   src->msg_init = false;
 }
 
@@ -353,7 +354,7 @@ static GstCaps * rosaudiosrc_fixate(GstBaseSrc * gst_base_src, GstCaps * caps)
   if (ros_base_src->node_if)
     RCLCPP_INFO(
       ros_base_src->node_if->logging->get_logger(), "preparing audio with caps '%s'",
-      gst_caps_to_string(caps));
+      gst_bridge::caps_to_string(caps).c_str());
 
   return caps;
 }
@@ -391,12 +392,12 @@ static GstCaps * rosaudiosrc_getcaps(GstBaseSrc * gst_base_src, GstCaps * filter
       "caps is not fixed");
   }
 */
-  GST_DEBUG_OBJECT(src, "getcaps with filter %s", gst_caps_to_string(filter));
+  GST_DEBUG_OBJECT(src, "getcaps with filter %s", gst_bridge::caps_to_string(filter).c_str());
 
   if (ros_base_src->node_if)
     RCLCPP_INFO(
       ros_base_src->node_if->logging->get_logger(), "getcaps with filter '%s'",
-      gst_caps_to_string(filter));
+      gst_bridge::caps_to_string(filter).c_str());
 
   // if init_caps is not set, we wait for the first message
   // if init_caps is set, we don't wait
@@ -413,17 +414,20 @@ static GstCaps * rosaudiosrc_getcaps(GstBaseSrc * gst_base_src, GstCaps * filter
       src, msg);  //XXX generalise this to return audio_info instead of relying on side-effects
 
     caps = gst_audio_info_to_caps(&(src->audio_info));
-    GST_DEBUG_OBJECT(src, "getcaps returning %s from first msg", gst_caps_to_string(caps));
+    GST_DEBUG_OBJECT(
+      src, "getcaps returning %s from first msg", gst_bridge::caps_to_string(caps).c_str());
 
     return caps;
   } else {
     caps = gst_caps_from_string(src->init_caps);
     if (gst_audio_info_from_caps(&(src->audio_info), caps)) {
-      GST_DEBUG_OBJECT(src, "getcaps returning %s from init_caps", gst_caps_to_string(caps));
+      GST_DEBUG_OBJECT(
+        src, "getcaps returning %s from init_caps", gst_bridge::caps_to_string(caps).c_str());
       src->msg_init = false;  //start checking message consistency
       return caps;
     }
     GST_DEBUG_OBJECT(src, "init_caps did not parse: '%s'", src->init_caps);
+    if (caps) gst_caps_unref(caps);
     return gst_pad_get_pad_template_caps(GST_BASE_SRC(src)->srcpad);
   }
 }

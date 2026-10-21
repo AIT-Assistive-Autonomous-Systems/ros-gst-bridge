@@ -116,6 +116,15 @@ GstAudioFormat getGstAudioFormat(const std::string & encoding);
 std::string getRosEncoding(GstVideoFormat);
 std::string getRosEncoding(GstAudioFormat);
 
+// caps as a string for logging, frees the string gst_caps_to_string allocates
+inline std::string caps_to_string(const GstCaps * caps)
+{
+  gchar * str = gst_caps_to_string(caps);
+  std::string result(str ? str : "");
+  g_free(str);
+  return result;
+}
+
 audio_msgs::msg::Audio gst_audio_info_to_audio_msg(GstAudioInfo * audio_info);
 
 /*
