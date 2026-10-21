@@ -25,7 +25,7 @@
  * <refsect2>
  * <title>Example launch line</title>
  * |[
- * gst-launch-1.0 -v rostextsrc topic="/string" ! txt. videotestsrc ! textoverlay name=txt ! autovideosink
+ * gst-launch-1.0 -v rostextsrc ros-topic="/string" ! txt. videotestsrc ! textoverlay name=txt ! autovideosink
  * ]|
  * Subscribe to /string topic and overlay on test video.
  * </refsect2>
@@ -68,6 +68,7 @@ enum {
   PROP_0,
   PROP_SILENT,
   PROP_ROS_TOPIC,
+  PROP_TOPIC_DEPRECATED,
 };
 
 /* pad templates */
@@ -108,8 +109,15 @@ static void rostextsrc_class_init(RostextsrcClass * klass)
   g_object_class_install_property(
     object_class, PROP_ROS_TOPIC,
     g_param_spec_string(
-      "topic", "Topic", "ROS topic to subscribe to", "string",
+      "ros-topic", "Topic", "ROS topic to subscribe to", "string",
       (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  // old name, other elements use ros-topic
+  g_object_class_install_property(
+    object_class, PROP_TOPIC_DEPRECATED,
+    g_param_spec_string(
+      "topic", "Topic", "Deprecated alias of ros-topic", "string",
+      (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_DEPRECATED)));
 
   ros_base_src_class->open =
     GST_DEBUG_FUNCPTR(rostextsrc_open);  //let the base sink know how we register publishers
@@ -160,6 +168,9 @@ static void rostextsrc_set_property(
       src->silent = g_value_get_boolean(value);
       break;
 
+    case PROP_TOPIC_DEPRECATED:
+      g_warning("rostextsrc: property 'topic' is deprecated, use 'ros-topic'");
+      [[fallthrough]];
     case PROP_ROS_TOPIC:
       if (ros_base_src->node_if) {
         RCLCPP_ERROR(
@@ -187,6 +198,7 @@ static void rostextsrc_get_property(
       break;
 
     case PROP_ROS_TOPIC:
+    case PROP_TOPIC_DEPRECATED:
       g_value_set_string(value, src->sub_topic);
       break;
 
