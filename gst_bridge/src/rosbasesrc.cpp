@@ -60,8 +60,27 @@ enum {
   PROP_ROS_NAMESPACE,
   PROP_ROS_START_TIME,
   PROP_ATTACH_REFERENCE_TIMESTAMP,
-  PROP_TIME_CAPS
+  PROP_TIME_CAPS,
+  PROP_TIMESTAMP_MODE
 };
+
+static GType gst_ros_src_timestamp_mode_get_type(void)
+{
+  static GType type = 0;
+  if (!type) {
+    static const GEnumValue values[] = {
+      {SRC_TIMESTAMP_MODE_ROS_OFFSET,
+       "Message header stamp aligned with the clock offset sampled at start, "
+       "arrival time for stamps before the stream start",
+       "ros-offset"},
+      {SRC_TIMESTAMP_MODE_ARRIVAL, "Arrival time (best compatibility, e.g. bag playback)",
+       "arrival"},
+      {SRC_TIMESTAMP_MODE_PTS, "Header stamp as PTS without any offset", "pts"},
+      {0, NULL, NULL}};
+    type = g_enum_register_static("GstRosSrcTimestampMode", values);
+  }
+  return type;
+}
 
 /* class initialization */
 
@@ -113,7 +132,14 @@ static void rosbasesrc_class_init(RosBaseSrcClass * klass)
     object_class, PROP_ATTACH_REFERENCE_TIMESTAMP,
     g_param_spec_boolean(
       "attach-reference-timestamp", "Attach Reference Timestamp",
-      "Attach GstReferenceTimestampMeta to buffers for use with rtpsrc", FALSE,
+      "Attach the message header stamp as GstReferenceTimestampMeta with time-caps", FALSE,
+      (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property(
+    object_class, PROP_TIMESTAMP_MODE,
+    g_param_spec_enum(
+      "timestamp-mode", "Timestamp Mode", "How to set the buffer PTS",
+      gst_ros_src_timestamp_mode_get_type(), SRC_TIMESTAMP_MODE_ROS_OFFSET,
       (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   element_class->change_state = GST_DEBUG_FUNCPTR(
@@ -129,6 +155,7 @@ static void rosbasesrc_init(RosBaseSrc * src)
   src->stream_start_prop = GST_CLOCK_TIME_NONE;
   src->time_caps = g_strdup("timestamp/x-rostime");
   src->attach_reference_timestamp = false;
+  src->timestamp_mode = SRC_TIMESTAMP_MODE_ROS_OFFSET;
 }
 
 void rosbasesrc_set_property(
@@ -181,6 +208,10 @@ void rosbasesrc_set_property(
       }
       break;
 
+    case PROP_TIMESTAMP_MODE:
+      src->timestamp_mode = (RosSrcTimestampMode)g_value_get_enum(value);
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
       break;
@@ -210,6 +241,14 @@ void rosbasesrc_get_property(
 
     case PROP_TIME_CAPS:
       g_value_set_string(value, src->time_caps);
+      break;
+
+    case PROP_ATTACH_REFERENCE_TIMESTAMP:
+      g_value_set_boolean(value, src->attach_reference_timestamp);
+      break;
+
+    case PROP_TIMESTAMP_MODE:
+      g_value_set_enum(value, src->timestamp_mode);
       break;
 
     default:
@@ -282,6 +321,9 @@ static gboolean rosbasesrc_open(RosBaseSrc * src)
   gboolean result = TRUE;
   GST_DEBUG_OBJECT(src, "open");
 
+  src->stamped_buffers = 0;
+  src->warned_stale_stamp = FALSE;
+
   if (nullptr == src->node_if) {
     // XXX this can be a call to a gst interface
     rosbaseimp_open(&(src->local_node), src->node_name, src->node_namespace);
@@ -329,8 +371,28 @@ void set_timestamps(
   GstBuffer ** buffer, RosBaseSrc * src, GstElement * element, GstClockTime msg_time)
 {
   GstClockTime base_time = gst_element_get_base_time(element);
-  GstClockTime stream_pts = msg_time - src->ros_clock_offset - base_time;
-  GST_BUFFER_PTS(*buffer) = stream_pts;
+  GstClockTimeDiff stream_pts =
+    (GstClockTimeDiff)msg_time - src->ros_clock_offset - (GstClockTimeDiff)base_time;
+
+  if (src->timestamp_mode == SRC_TIMESTAMP_MODE_ARRIVAL) {
+    GST_BUFFER_PTS(*buffer) = GST_CLOCK_TIME_NONE;  // basesrc (do-timestamp) uses the arrival time
+  } else if (src->timestamp_mode == SRC_TIMESTAMP_MODE_PTS) {
+    GST_BUFFER_PTS(*buffer) = msg_time;
+  } else if (stream_pts >= 0) {
+    GST_BUFFER_PTS(*buffer) = stream_pts;
+  } else {
+    // the stamp is before the stream start (e.g. ros2 bag play without sim time) and would
+    // underflow, leave the PTS unset so basesrc (do-timestamp) uses the arrival time
+    GST_BUFFER_PTS(*buffer) = GST_CLOCK_TIME_NONE;
+    // the first message may be queued during preroll, only later ones indicate old stamps
+    if (src->stamped_buffers > 0 && !src->warned_stale_stamp) {
+      GST_ELEMENT_WARNING(
+        element, STREAM, FAILED, ("message stamps are before the stream start"),
+        ("timestamping with the arrival time instead (e.g. ros2 bag play without sim time)"));
+      src->warned_stale_stamp = TRUE;
+    }
+  }
+  src->stamped_buffers++;
 
   if (src->attach_reference_timestamp) {
     GstCaps * caps = gst_caps_new_empty_simple(src->time_caps);

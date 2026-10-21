@@ -23,9 +23,11 @@
  * <refsect2>
  * <title>Example launch line</title>
  * |[
- * gst-launch-1.0 roscompressedimagesrc ros-topic="/cam/image_raw" use-msg-stamp=false ! jpegdec ! videoconvert ! autovideosink
+ * gst-launch-1.0 roscompressedimagesrc ros-topic="/cam/image_raw" timestamp-mode=arrival ! jpegdec ! videoconvert ! autovideosink
  * ]|
  * Shows the images of /cam/image_raw/compressed, e.g. from ros2 bag play.
+ * Add attach-reference-timestamp=true time-caps=timestamp/x-unix to keep the original header
+ * stamps as reference timestamp meta (e.g. for a sink with timestamp-mode=reference).
  * </refsect2>
  */
 
@@ -61,7 +63,6 @@ enum {
   PROP_0,
   PROP_ROS_TOPIC,
   PROP_ROS_TRANSPORT,
-  PROP_USE_MSG_STAMP,
   PROP_ROS_FRAME_ID,
   PROP_ROS_FORMAT,
 };
@@ -116,14 +117,6 @@ static void roscompressedimagesrc_class_init(RoscompressedimagesrcClass * klass)
       "compressed", (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   g_object_class_install_property(
-    object_class, PROP_USE_MSG_STAMP,
-    g_param_spec_boolean(
-      "use-msg-stamp", "use-msg-stamp",
-      "timestamp buffers from the message header stamp, else with the arrival time "
-      "(use false for ros2 bag play without sim time)",
-      TRUE, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
-
-  g_object_class_install_property(
     object_class, PROP_ROS_FRAME_ID,
     g_param_spec_string(
       "ros-frame-id", "frame-id", "frame_id of the last message", "",
@@ -153,7 +146,6 @@ static void roscompressedimagesrc_init(Roscompressedimagesrc * src)
   // the instance is zero allocated by GObject, construct the C++ members in place
   new (&src->sub_topic) std::string("gst_image_sub");
   new (&src->transport) std::string("compressed");
-  src->use_msg_stamp = true;
   new (&src->sub) rclcpp::Subscription<Roscompressedimagesrc::MsgType>::SharedPtr();
   new (&src->msg_queue) std::deque<Roscompressedimagesrc::MsgType::ConstSharedPtr>();
   new (&src->msg_queue_mtx) std::mutex();
@@ -162,8 +154,6 @@ static void roscompressedimagesrc_init(Roscompressedimagesrc * src)
   new (&src->frame_id) std::string();
   new (&src->format) std::string();
   new (&src->media_type) std::string();
-  src->first_buffer = true;
-  src->warned_stamp = false;
 
   /* configure basesrc to be a live source */
   gst_base_src_set_live(GST_BASE_SRC(src), TRUE);
@@ -220,10 +210,6 @@ static void roscompressedimagesrc_set_property(
       }
       break;
 
-    case PROP_USE_MSG_STAMP:
-      src->use_msg_stamp = g_value_get_boolean(value);
-      break;
-
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
       break;
@@ -244,10 +230,6 @@ static void roscompressedimagesrc_get_property(
 
     case PROP_ROS_TRANSPORT:
       g_value_set_string(value, src->transport.c_str());
-      break;
-
-    case PROP_USE_MSG_STAMP:
-      g_value_set_boolean(value, src->use_msg_stamp);
       break;
 
     case PROP_ROS_FRAME_ID: {
@@ -309,7 +291,6 @@ static gboolean roscompressedimagesrc_close(RosBaseSrc * ros_base_src)
   std::unique_lock<std::mutex> lck(src->msg_queue_mtx);
   src->msg_queue.clear();
   src->media_type.clear();
-  src->first_buffer = true;
 
   return TRUE;
 }
@@ -422,24 +403,8 @@ static GstFlowReturn roscompressedimagesrc_create(
   *buf = gst_buffer_new_memdup(msg->data.data(), msg->data.size());
 
   GstClockTime msg_time = rclcpp::Time(msg->header.stamp).nanoseconds();
-  // also attaches the reference timestamp meta if enabled
+  // PTS per timestamp-mode, attaches the reference timestamp meta if enabled
   set_timestamps(buf, ros_base_src, GST_ELEMENT(src), msg_time);
-
-  // set_timestamps underflows for stamps before the stream start (e.g. bag playback),
-  // leave those buffers without a PTS so basesrc stamps them with the arrival time
-  GstClockTimeDiff stream_pts = (GstClockTimeDiff)msg_time - ros_base_src->ros_clock_offset -
-                                (GstClockTimeDiff)gst_element_get_base_time(GST_ELEMENT(src));
-  if (!src->use_msg_stamp || stream_pts < 0) {
-    // the first message may be received during preroll, only later ones indicate old stamps
-    if (src->use_msg_stamp && !src->first_buffer && !src->warned_stamp) {
-      GST_ELEMENT_WARNING(
-        src, STREAM, FAILED, ("message stamps are before the stream start"),
-        ("timestamping with the arrival time instead, set use-msg-stamp=false to silence this"));
-      src->warned_stamp = true;
-    }
-    GST_BUFFER_PTS(*buf) = GST_CLOCK_TIME_NONE;
-  }
-  src->first_buffer = false;
 
   return GST_FLOW_OK;
 }

@@ -41,6 +41,13 @@ G_BEGIN_DECLS
 typedef struct _RosBaseSrc RosBaseSrc;
 typedef struct _RosBaseSrcClass RosBaseSrcClass;
 
+// how set_timestamps sets the buffer PTS
+typedef enum {
+  SRC_TIMESTAMP_MODE_ROS_OFFSET = 0,  // header stamp aligned with the offset sampled at start
+  SRC_TIMESTAMP_MODE_ARRIVAL = 1,     // arrival time (basesrc do-timestamp)
+  SRC_TIMESTAMP_MODE_PTS = 2,         // header stamp as is, no offset (like the sinks' pts mode)
+} RosSrcTimestampMode;
+
 struct _RosBaseSrc
 {
   GstBaseSrc parent;
@@ -48,6 +55,7 @@ struct _RosBaseSrc
   gchar * node_namespace;
   gchar * time_caps;
   gboolean attach_reference_timestamp;
+  RosSrcTimestampMode timestamp_mode;
 
   // private variables to construct the node interfaces
   RosBaseImp local_node;
@@ -61,6 +69,10 @@ struct _RosBaseSrc
   rclcpp::Time stream_start;
   rcl_time_point_value_t stream_start_prop;  //uint64_t, equiv to GST_TYPE_CLOCK_TIME
   GstClockTimeDiff ros_clock_offset;
+
+  // set_timestamps: stamps before the stream start (e.g. bag playback) use the arrival time
+  guint64 stamped_buffers;
+  gboolean warned_stale_stamp;
 };
 
 struct _RosBaseSrcClass

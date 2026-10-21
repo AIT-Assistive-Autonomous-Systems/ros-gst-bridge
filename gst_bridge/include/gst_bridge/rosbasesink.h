@@ -44,7 +44,10 @@ typedef struct _RosBaseSinkClass RosBaseSinkClass;
 typedef enum {
   TIMESTAMP_MODE_ROS_OFFSET = 0,
   TIMESTAMP_MODE_REFERENCE = 1,
-  TIMESTAMP_MODE_PTS = 2
+  TIMESTAMP_MODE_PTS = 2,
+  TIMESTAMP_MODE_ARRIVAL_PIPELINE = 3,  // pipeline clock at render
+  TIMESTAMP_MODE_ARRIVAL_ROS = 4,       // node clock at render (sim time aware)
+  TIMESTAMP_MODE_ARRIVAL_REALTIME = 5   // system wall clock at render
 } RosTimestampMode;
 
 #define GST_TYPE_ROS_TIMESTAMP_MODE (gst_ros_timestamp_mode_get_type())

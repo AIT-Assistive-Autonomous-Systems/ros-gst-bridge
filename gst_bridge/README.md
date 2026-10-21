@@ -36,10 +36,38 @@ camera info publisher is created, and nothing is published if the file fails to 
 ## Compressed images back into a pipeline:
 `roscompressedimagesrc` subscribes to `<ros-topic>/<ros-transport>` (jpeg/png `sensor_msgs/CompressedImage`,
 `ros-transport` defaults to `compressed`) and outputs `image/jpeg` or `image/png` following each message's `format`.
-Buffers are timestamped from the message stamps; stamps from before the stream start (e.g. `ros2 bag play`
-without sim time) fall back to the arrival time with a warning, `use-msg-stamp=false` always uses the arrival time.
 
-`gst-launch-1.0 --gst-plugin-path=install/lib/gst_bridge/ roscompressedimagesrc ros-topic="/cam/image_raw" use-msg-stamp=false ! jpegdec ! videoconvert ! autovideosink`
+`gst-launch-1.0 --gst-plugin-path=install/lib/gst_bridge/ roscompressedimagesrc ros-topic="/cam/image_raw" timestamp-mode=arrival ! jpegdec ! videoconvert ! autovideosink`
+
+## Sink timestamps:
+All sinks set `header.stamp` according to `timestamp-mode`:
+* `ros-offset` (default): buffer PTS mapped to the ROS clock with the clock offset sampled at start (capture time).
+* `reference`: the `GstReferenceTimestampMeta` matching `reference-caps` (default `timestamp/x-unix`), else
+  `timestamp/x-ntp` converted to the Unix epoch, else `ros-offset` (warns once).
+* `pts`: the buffer PTS (pipeline running time, relative to the stream start).
+* `arrival-pipeline`: the absolute pipeline clock time when the sink renders the buffer.
+* `arrival-ros`: the ROS node clock when the sink renders the buffer, like a ROS driver stamping on receipt
+  (follows `use_sim_time`).
+* `arrival-realtime`: the system wall clock when the sink renders the buffer (ignores sim time).
+
+The arrival modes include the pipeline latency; with `sync=true` (default) the sink waits until the buffer is due.
+
+## Source timestamps:
+All sources (`rosimagesrc`, `roscompressedimagesrc`, `rosrawsrc`, `rosaudiosrc`, `rostextsrc`) set the buffer
+PTS according to `timestamp-mode`:
+* `ros-offset` (default): the message header stamp, mapped to pipeline time with the ROS/pipeline clock offset
+  sampled at start. Stamps from before the stream start (e.g. `ros2 bag play` without sim time) fall back to the
+  arrival time with a warning.
+* `arrival`: the arrival time, best compatibility (e.g. bag playback).
+* `pts`: the header stamp as is, without any offset (the counterpart of the sinks' `timestamp-mode=pts`).
+  Only meaningful if the stamps are in the pipeline's time base, use `sync=false` sinks otherwise.
+
+Independent of the PTS, `attach-reference-timestamp=true` keeps each header stamp as a `GstReferenceTimestampMeta`
+with the caps given in `time-caps` (default `timestamp/x-rostime`, use `timestamp/x-unix` if the recording clock
+was UTC wall clock). A sink with `timestamp-mode=reference reference-caps=timestamp/x-unix` then republishes the
+original stamps, e.g. after processing:
+
+`gst-launch-1.0 roscompressedimagesrc ros-topic="/cam/image_raw" timestamp-mode=arrival attach-reference-timestamp=true time-caps=timestamp/x-unix ! jpegdec ! videoflip method=horizontal-flip ! jpegenc ! roscompressedimagesink ros-topic="/relay/image_raw" timestamp-mode=reference reference-caps=timestamp/x-unix`
 
 ## More complex usage:
 

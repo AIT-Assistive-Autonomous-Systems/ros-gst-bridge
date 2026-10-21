@@ -32,6 +32,7 @@
 
 #include <gst_bridge/rosbasesink.h>
 
+#include <chrono>
 #include <cstdint>
 #include <optional>
 
@@ -107,8 +108,15 @@ static GType gst_ros_timestamp_mode_get_type(void)
   if (!type) {
     static const GEnumValue values[] = {
       {TIMESTAMP_MODE_ROS_OFFSET, "Ros Offset Adjusted", "ros-offset"},
-      {TIMESTAMP_MODE_REFERENCE, "Reference timestamp meta (reference-caps, else x-ntp)", "reference"},
+      {TIMESTAMP_MODE_REFERENCE,
+       "Reference timestamp meta (reference-caps, else x-ntp), else ros-offset", "reference"},
       {TIMESTAMP_MODE_PTS, "Presentation Timestamp", "pts"},
+      {TIMESTAMP_MODE_ARRIVAL_PIPELINE, "Pipeline clock time at render (absolute)",
+       "arrival-pipeline"},
+      {TIMESTAMP_MODE_ARRIVAL_ROS, "ROS node clock at render, like a ROS driver (sim time aware)",
+       "arrival-ros"},
+      {TIMESTAMP_MODE_ARRIVAL_REALTIME, "System wall clock at render (ignores sim time)",
+       "arrival-realtime"},
       {0, NULL, NULL}};
     type = g_enum_register_static("GstRosTimestampMode", values);
   }
@@ -420,15 +428,14 @@ static GstFlowReturn rosbasesink_render(GstBaseSink * base_sink, GstBuffer * buf
 
       if (reference_time.has_value()) {
         msg_time = *reference_time;
-      } else {
-        if (sink->node_if)
-          RCLCPP_WARN(sink->node_if->logging->get_logger(), "no reference timestamp found");
+        break;
       }
-      break;
-    }
-    case TIMESTAMP_MODE_PTS: {
-      msg_time = rclcpp::Time(GST_BUFFER_PTS(buf), get_clock_type_from(sink));
-      break;
+      // no reference timestamp, fall back to the pipeline time converted to ROS time
+      if (sink->node_if)
+        RCLCPP_WARN_ONCE(
+          sink->node_if->logging->get_logger(),
+          "no reference timestamp found, using the ros-offset time");
+      [[fallthrough]];
     }
     case TIMESTAMP_MODE_ROS_OFFSET: {
       // XXX look at the base sink clock synchronising features
@@ -436,6 +443,30 @@ static GstFlowReturn rosbasesink_render(GstBaseSink * base_sink, GstBuffer * buf
 
       msg_time = rclcpp::Time(
         GST_BUFFER_PTS(buf) + base_time + sink->ros_clock_offset, get_clock_type_from(sink));
+      break;
+    }
+    case TIMESTAMP_MODE_PTS: {
+      msg_time = rclcpp::Time(GST_BUFFER_PTS(buf), get_clock_type_from(sink));
+      break;
+    }
+    // render time, with sync=true the sink waited until the buffer was due (PTS + latency)
+    case TIMESTAMP_MODE_ARRIVAL_PIPELINE: {
+      GstClock * clock = gst_element_get_clock(GST_ELEMENT(sink));
+      if (clock) {
+        msg_time = rclcpp::Time(gst_clock_get_time(clock), get_clock_type_from(sink));
+        gst_object_unref(clock);
+      }
+      break;
+    }
+    case TIMESTAMP_MODE_ARRIVAL_ROS: {
+      msg_time = sink->node_if->clock->get_clock()->now();
+      break;
+    }
+    case TIMESTAMP_MODE_ARRIVAL_REALTIME: {
+      auto now = std::chrono::system_clock::now().time_since_epoch();
+      msg_time = rclcpp::Time(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(now).count(), RCL_SYSTEM_TIME);
+      break;
     }
   }
 

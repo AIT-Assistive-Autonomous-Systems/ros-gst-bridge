@@ -55,7 +55,6 @@ struct _Roscompressedimagesrc
   // and destroyed in roscompressedimagesrc_finalize
   std::string sub_topic;  //base image topic, subscribed on <sub_topic>/<transport>
   std::string transport;  //image_transport style topic suffix, none if empty
-  bool use_msg_stamp;     //timestamp buffers from the message header, else on arrival
 
   rclcpp::Subscription<MsgType>::SharedPtr sub;
 
@@ -68,8 +67,6 @@ struct _Roscompressedimagesrc
   std::string format;    //of the last message
 
   std::string media_type;  //media type of the caps currently set on the src pad
-  bool first_buffer;       //the first message may be queued during preroll, before the start
-  bool warned_stamp;       //warned once about stamps before the stream start
 };
 
 struct _RoscompressedimagesrcClass
