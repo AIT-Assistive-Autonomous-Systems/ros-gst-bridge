@@ -73,7 +73,7 @@ void SinkDiagnostics::set_caps_rate(double rate)
 double SinkDiagnostics::expected_rate_locked(const char ** source) const
 {
   if (config_.expected_rate > 0) {
-    if (source) *source = "expected-rate";
+    if (source) *source = "ros-diagnostic-expected-rate";
     return config_.expected_rate;
   }
   if (caps_rate_ > 0) {

@@ -23,25 +23,27 @@
 namespace gst_bridge
 {
 /*
-  Health of a bridge sink on /diagnostics (diagnostic_msgs/DiagnosticArray), every period (1 s) from a
-  thread of its own (the sink's node has no executor, and a stalled stream must still report):
+  Health of a bridge sink on /diagnostics (diagnostic_msgs/DiagnosticArray), every
+  ros-diagnostic-period (1 s) from a thread of its own (the sink's node has no executor, and a
+  stalled stream must still report):
 
-  * rate of the published messages (over the last period), against expected-rate if set
+  * rate of the published messages (over the last period), against
+    ros-diagnostic-expected-rate if set
   * missing frames: gaps in the message stamps above 1.5x the expected (else the median) interval
   * stamp age: node clock at publish - message stamp (catches a TAI or unsynchronized camera:
     seconds off, and stamps in the future)
   * publish time: how long the publish call took (DDS / subscriber backpressure)
   * stall: no message for 2 s (or 2 frame intervals, if longer)
 
-  Expected rate: the element's expected-rate if set, else the framerate of the caps (video), else
-  unknown (gaps against the median interval, the rate itself not checked).
+  Expected rate: the element's ros-diagnostic-expected-rate if set, else the framerate of the
+  caps (video), else unknown (gaps against the median interval, the rate itself not checked).
 
   Status (diagnostic_updater convention): name "<node>: <topic> topic status" (node without the
   leading slash), hardware_id the element's ros-diagnostic-hardware-id, else the node name.
 
   Level: ERROR stalled; WARN frames missing in the period, rate off the expected by more than
-  10 %, stamp age above max-stamp-age or more than 50 ms in the future, publish time above half a
-  frame interval, waiting for the first message; else OK.
+  10 %, stamp age above ros-diagnostic-max-stamp-age or more than 50 ms in the future, publish
+  time above half a frame interval, waiting for the first message; else OK.
 */
 class SinkDiagnostics
 {
@@ -51,7 +53,7 @@ public:
     std::string node_name;       // the node's fully qualified name
     std::string hardware_id;     // empty: node_name
     double period = 1.0;         // s, publish period (and window of the rates)
-    double expected_rate = 0.0;  // Hz, the element's expected-rate: overrides the caps' framerate
+    double expected_rate = 0.0;  // Hz, ros-diagnostic-expected-rate: overrides the caps' framerate
     double max_stamp_age = 1.0;  // s, 0: not checked
   };
 
@@ -65,7 +67,8 @@ public:
   void set_caps_rate(double rate);
 
 private:
-  // expected rate (Hz) and where it comes from: expected-rate, else the caps; 0: unknown
+  // expected rate (Hz) and where it comes from: ros-diagnostic-expected-rate, else the caps;
+  // 0: unknown
   double expected_rate_locked(const char ** source) const;
   void run();
   void publish_status();

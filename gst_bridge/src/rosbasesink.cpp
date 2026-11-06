@@ -223,15 +223,15 @@ static void rosbasesink_class_init(RosBaseSinkClass * klass)
   g_object_class_install_property(
     object_class, PROP_DIAGNOSTICS,
     g_param_spec_boolean(
-      "diagnostics", "Diagnostics",
-      "Publish the sink's health on /diagnostics once a second: rate, missing frames (gaps in the "
-      "stamps), stamp age, publish time, stalls",
+      "ros-diagnostic", "Diagnostics",
+      "Publish the sink's health on /diagnostics every ros-diagnostic-period: rate, missing frames "
+      "(gaps in the stamps), stamp age, publish time, stalls",
       TRUE, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   g_object_class_install_property(
     object_class, PROP_EXPECTED_RATE,
     g_param_spec_double(
-      "expected-rate", "Expected rate",
+      "ros-diagnostic-expected-rate", "Diagnostic expected rate",
       "Expected message rate (Hz) for the diagnostics, 0: the caps' framerate (video), else "
       "unknown (gaps against the median interval, rate not checked)",
       0.0, G_MAXDOUBLE, 0.0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
@@ -239,7 +239,7 @@ static void rosbasesink_class_init(RosBaseSinkClass * klass)
   g_object_class_install_property(
     object_class, PROP_MAX_STAMP_AGE,
     g_param_spec_double(
-      "max-stamp-age", "Maximum stamp age",
+      "ros-diagnostic-max-stamp-age", "Diagnostic maximum stamp age",
       "Diagnostics warn when a message is published more than this many seconds after its stamp "
       "(node clock), 0: not checked",
       0.0, G_MAXDOUBLE, 1.0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
