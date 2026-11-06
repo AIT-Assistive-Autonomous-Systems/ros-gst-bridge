@@ -144,8 +144,9 @@ void SinkDiagnostics::run()
 void SinkDiagnostics::publish_status()
 {
   diagnostic_msgs::msg::DiagnosticStatus status;
-  status.name = config_.name;
-  status.hardware_id = config_.name;
+  std::string node = config_.node_name;
+  if (!node.empty() && node[0] == '/') node.erase(0, 1);
+  status.hardware_id = config_.hardware_id.empty() ? node : config_.hardware_id;
   std::vector<std::string> problems;
   uint8_t level = diagnostic_msgs::msg::DiagnosticStatus::OK;
   auto raise = [&](uint8_t l, const std::string & what) {
@@ -171,7 +172,7 @@ void SinkDiagnostics::publish_status()
       interval = v[v.size() / 2];
     }
 
-    status.values.push_back(kv("topic", topic_));
+    status.name = topic_.empty() ? node : node + ": " + topic_ + " topic status";
     status.values.push_back(kv("messages", std::to_string(frames_)));
     status.values.push_back(kv("rate (Hz)", fmt("%.2f", rate)));
     status.values.push_back(kv(

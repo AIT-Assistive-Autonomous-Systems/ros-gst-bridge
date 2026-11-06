@@ -36,6 +36,9 @@ namespace gst_bridge
   Expected rate: the element's expected-rate if set, else the framerate of the caps (video), else
   unknown (gaps against the median interval, the rate itself not checked).
 
+  Status (diagnostic_updater convention): name "<node>: <topic> topic status" (node without the
+  leading slash), hardware_id the element's ros-diagnostic-hardware-id, else the node name.
+
   Level: ERROR stalled; WARN frames missing in the period, rate off the expected by more than
   10 %, stamp age above max-stamp-age or more than 50 ms in the future, publish time above half a
   frame interval, waiting for the first message; else OK.
@@ -45,7 +48,8 @@ class SinkDiagnostics
 public:
   struct Config
   {
-    std::string name;            // status name: the node's fully qualified name
+    std::string node_name;       // the node's fully qualified name
+    std::string hardware_id;     // empty: node_name
     double expected_rate = 0.0;  // Hz, the element's expected-rate: overrides the caps' framerate
     double max_stamp_age = 1.0;  // s, 0: not checked
   };
