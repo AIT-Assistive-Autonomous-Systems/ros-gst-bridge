@@ -18,7 +18,6 @@ namespace
 {
 constexpr size_t MEDIAN_WINDOW = 15;
 constexpr size_t MIN_INTERVALS = 5;
-constexpr auto PERIOD = std::chrono::seconds(1);
 constexpr int64_t MIN_STALL_NS = 2'000'000'000;
 constexpr int64_t FUTURE_TOLERANCE_NS = 50'000'000;
 
@@ -43,6 +42,8 @@ SinkDiagnostics::SinkDiagnostics(std::shared_ptr<node_interface_collection> node
 {
   pub_ = rclcpp::create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
     node_if_->parameters, node_if_->topics, "/diagnostics", rclcpp::QoS(10));
+  period_ = std::chrono::nanoseconds(
+    std::max<int64_t>(1'000'000, std::llround(std::max(config_.period, 0.0) * 1e9)));
   period_start_ = std::chrono::steady_clock::now();
   thread_ = std::thread([this] { run(); });
 }
@@ -129,7 +130,7 @@ void SinkDiagnostics::run()
 {
   std::unique_lock<std::mutex> lock(mutex_);
   while (!stop_) {
-    if (cv_.wait_for(lock, PERIOD, [this] { return stop_; })) break;
+    if (cv_.wait_for(lock, period_, [this] { return stop_; })) break;
     lock.unlock();
     try {
       publish_status();
@@ -219,7 +220,7 @@ void SinkDiagnostics::publish_status()
           fmt("publish slow: %.1f ms (backpressure)", period_publish_max_ns_ / 1e6));
       }
     }
-    if (expected_rate > 0 && frames_ > 0 && period_s > 0.5) {
+    if (expected_rate > 0 && frames_ > 0 && period_s > 0.5 * config_.period) {
       if (rate < 0.9 * expected_rate || rate > 1.1 * expected_rate) {
         raise(DiagnosticStatus::WARN, fmt("rate %.2f Hz", rate));
       }

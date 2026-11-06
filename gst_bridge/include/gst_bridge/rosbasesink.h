@@ -89,6 +89,7 @@ struct _RosBaseSink
   gdouble expected_rate;
   gdouble max_stamp_age;
   gchar * diagnostic_hardware_id;  // empty: the node's fully qualified name
+  gdouble diagnostic_period;       // s
   std::unique_ptr<gst_bridge::SinkDiagnostics> diagnostics;
   GstCaps * diagnostics_caps;  // caps the diagnostics' nominal rate was read from
 };

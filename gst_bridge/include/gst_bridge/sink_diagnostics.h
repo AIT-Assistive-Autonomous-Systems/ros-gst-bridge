@@ -23,7 +23,7 @@
 namespace gst_bridge
 {
 /*
-  Health of a bridge sink on /diagnostics (diagnostic_msgs/DiagnosticArray), once a second from a
+  Health of a bridge sink on /diagnostics (diagnostic_msgs/DiagnosticArray), every period (1 s) from a
   thread of its own (the sink's node has no executor, and a stalled stream must still report):
 
   * rate of the published messages (over the last period), against expected-rate if set
@@ -50,6 +50,7 @@ public:
   {
     std::string node_name;       // the node's fully qualified name
     std::string hardware_id;     // empty: node_name
+    double period = 1.0;         // s, publish period (and window of the rates)
     double expected_rate = 0.0;  // Hz, the element's expected-rate: overrides the caps' framerate
     double max_stamp_age = 1.0;  // s, 0: not checked
   };
@@ -77,6 +78,7 @@ private:
   std::condition_variable cv_;
   bool stop_ = false;
   std::thread thread_;
+  std::chrono::nanoseconds period_;
 
   // statistics, under mutex_
   std::string topic_;

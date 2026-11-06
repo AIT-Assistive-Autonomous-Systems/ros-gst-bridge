@@ -62,8 +62,50 @@ enum {
   PROP_ROS_START_TIME,
   PROP_ATTACH_REFERENCE_TIMESTAMP,
   PROP_TIME_CAPS,
-  PROP_TIMESTAMP_MODE
+  PROP_TIMESTAMP_MODE,
+  PROP_TOPIC_STATISTICS,
+  PROP_TOPIC_STATISTICS_TOPIC,
+  PROP_TOPIC_STATISTICS_PERIOD,
+  PROP_TOPIC_STATISTICS_QOS_DEPTH,
+  PROP_TOPIC_STATISTICS_QOS_RELIABILITY,
+  PROP_TOPIC_STATISTICS_QOS_DURABILITY
 };
+
+static GType gst_ros_topic_statistics_state_get_type(void)
+{
+  static GType type = 0;
+  static const GEnumValue values[] = {
+    {TOPIC_STATISTICS_NODE_DEFAULT, "The node's default", "node-default"},
+    {TOPIC_STATISTICS_ENABLE, "Enabled", "enable"},
+    {TOPIC_STATISTICS_DISABLE, "Disabled", "disable"},
+    {0, NULL, NULL}};
+  if (!type) type = g_enum_register_static("GstRosTopicStatisticsState", values);
+  return type;
+}
+
+static GType gst_ros_qos_reliability_get_type(void)
+{
+  static GType type = 0;
+  static const GEnumValue values[] = {
+    {QOS_RELIABILITY_SYSTEM_DEFAULT, "System default", "system-default"},
+    {QOS_RELIABILITY_RELIABLE, "Reliable", "reliable"},
+    {QOS_RELIABILITY_BEST_EFFORT, "Best effort", "best-effort"},
+    {0, NULL, NULL}};
+  if (!type) type = g_enum_register_static("GstRosQosReliability", values);
+  return type;
+}
+
+static GType gst_ros_qos_durability_get_type(void)
+{
+  static GType type = 0;
+  static const GEnumValue values[] = {
+    {QOS_DURABILITY_SYSTEM_DEFAULT, "System default", "system-default"},
+    {QOS_DURABILITY_VOLATILE, "Volatile", "volatile"},
+    {QOS_DURABILITY_TRANSIENT_LOCAL, "Transient local", "transient-local"},
+    {0, NULL, NULL}};
+  if (!type) type = g_enum_register_static("GstRosQosDurability", values);
+  return type;
+}
 
 static GType gst_ros_src_timestamp_mode_get_type(void)
 {
@@ -144,6 +186,52 @@ static void rosbasesrc_class_init(RosBaseSrcClass * klass)
       gst_ros_src_timestamp_mode_get_type(), SRC_TIMESTAMP_MODE_ROS_OFFSET,
       (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
+  g_object_class_install_property(
+    object_class, PROP_TOPIC_STATISTICS,
+    g_param_spec_enum(
+      "ros-topic-statistics", "Topic statistics",
+      "rclcpp topic statistics of the subscription: message age (header stamp) and period over "
+      "each ros-topic-statistics-period, published as statistics_msgs/MetricsMessage on "
+      "ros-topic-statistics-topic. node-default: the node's enable_topic_statistics option "
+      "(the element's own node: disabled)",
+      gst_ros_topic_statistics_state_get_type(), TOPIC_STATISTICS_NODE_DEFAULT,
+      (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property(
+    object_class, PROP_TOPIC_STATISTICS_TOPIC,
+    g_param_spec_string(
+      "ros-topic-statistics-topic", "Topic statistics topic", "Topic of the topic statistics",
+      "/statistics", (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property(
+    object_class, PROP_TOPIC_STATISTICS_PERIOD,
+    g_param_spec_double(
+      "ros-topic-statistics-period", "Topic statistics period",
+      "Publish period of the topic statistics (s), also their window: each message covers the "
+      "messages received since the previous one",
+      0.001, 3600.0, 1.0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property(
+    object_class, PROP_TOPIC_STATISTICS_QOS_DEPTH,
+    g_param_spec_uint(
+      "ros-topic-statistics-qos-depth", "Topic statistics QoS depth",
+      "History depth (keep last) of the topic statistics publisher", 1, G_MAXINT, 10,
+      (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property(
+    object_class, PROP_TOPIC_STATISTICS_QOS_RELIABILITY,
+    g_param_spec_enum(
+      "ros-topic-statistics-qos-reliability", "Topic statistics QoS reliability",
+      "Reliability of the topic statistics publisher", gst_ros_qos_reliability_get_type(),
+      QOS_RELIABILITY_SYSTEM_DEFAULT, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property(
+    object_class, PROP_TOPIC_STATISTICS_QOS_DURABILITY,
+    g_param_spec_enum(
+      "ros-topic-statistics-qos-durability", "Topic statistics QoS durability",
+      "Durability of the topic statistics publisher", gst_ros_qos_durability_get_type(),
+      QOS_DURABILITY_SYSTEM_DEFAULT, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
   element_class->change_state = GST_DEBUG_FUNCPTR(
     rosbasesrc_change_state);  //use state change events to open and close subscribers
 
@@ -163,6 +251,40 @@ static void rosbasesrc_init(RosBaseSrc * src)
   src->time_caps = g_strdup("timestamp/x-rostime");
   src->attach_reference_timestamp = false;
   src->timestamp_mode = SRC_TIMESTAMP_MODE_ROS_OFFSET;
+  src->topic_statistics = TOPIC_STATISTICS_NODE_DEFAULT;
+  src->topic_statistics_topic = g_strdup("/statistics");
+  src->topic_statistics_period = 1.0;
+  src->topic_statistics_qos_depth = 10;
+  src->topic_statistics_qos_reliability = QOS_RELIABILITY_SYSTEM_DEFAULT;
+  src->topic_statistics_qos_durability = QOS_DURABILITY_SYSTEM_DEFAULT;
+}
+
+rclcpp::SubscriptionOptions rosbasesrc_subscription_options(RosBaseSrc * src)
+{
+  rclcpp::SubscriptionOptions options;
+  auto & stats = options.topic_stats_options;
+  switch (src->topic_statistics) {
+    case TOPIC_STATISTICS_ENABLE:
+      stats.state = rclcpp::TopicStatisticsState::Enable;
+      break;
+    case TOPIC_STATISTICS_DISABLE:
+      stats.state = rclcpp::TopicStatisticsState::Disable;
+      break;
+    default:
+      stats.state = rclcpp::TopicStatisticsState::NodeDefault;
+      break;
+  }
+  stats.publish_topic = src->topic_statistics_topic;
+  stats.publish_period = std::chrono::milliseconds(
+    std::max<int64_t>(1, std::llround(src->topic_statistics_period * 1000.0)));
+  stats.qos = rclcpp::SystemDefaultsQoS().keep_last(src->topic_statistics_qos_depth);
+  if (src->topic_statistics_qos_reliability == QOS_RELIABILITY_RELIABLE) stats.qos.reliable();
+  if (src->topic_statistics_qos_reliability == QOS_RELIABILITY_BEST_EFFORT) stats.qos.best_effort();
+  if (src->topic_statistics_qos_durability == QOS_DURABILITY_VOLATILE)
+    stats.qos.durability_volatile();
+  if (src->topic_statistics_qos_durability == QOS_DURABILITY_TRANSIENT_LOCAL)
+    stats.qos.transient_local();
+  return options;
 }
 
 static void rosbasesrc_finalize(GObject * object)
@@ -182,6 +304,7 @@ static void rosbasesrc_finalize(GObject * object)
   g_free(src->node_name);
   g_free(src->node_namespace);
   g_free(src->time_caps);
+  g_free(src->topic_statistics_topic);
 
   G_OBJECT_CLASS(rosbasesrc_parent_class)->finalize(object);
 }
@@ -240,6 +363,32 @@ void rosbasesrc_set_property(
       src->timestamp_mode = (RosSrcTimestampMode)g_value_get_enum(value);
       break;
 
+    case PROP_TOPIC_STATISTICS:
+    case PROP_TOPIC_STATISTICS_TOPIC:
+    case PROP_TOPIC_STATISTICS_PERIOD:
+    case PROP_TOPIC_STATISTICS_QOS_DEPTH:
+    case PROP_TOPIC_STATISTICS_QOS_RELIABILITY:
+    case PROP_TOPIC_STATISTICS_QOS_DURABILITY:
+      // used when the subscription is created (open)
+      if (src->node_if) {
+        RCLCPP_ERROR(
+          src->node_if->logging->get_logger(), "can't change %s once opened", pspec->name);
+      } else if (property_id == PROP_TOPIC_STATISTICS) {
+        src->topic_statistics = (RosTopicStatisticsState)g_value_get_enum(value);
+      } else if (property_id == PROP_TOPIC_STATISTICS_TOPIC) {
+        g_free(src->topic_statistics_topic);
+        src->topic_statistics_topic = g_value_dup_string(value);
+      } else if (property_id == PROP_TOPIC_STATISTICS_PERIOD) {
+        src->topic_statistics_period = g_value_get_double(value);
+      } else if (property_id == PROP_TOPIC_STATISTICS_QOS_DEPTH) {
+        src->topic_statistics_qos_depth = g_value_get_uint(value);
+      } else if (property_id == PROP_TOPIC_STATISTICS_QOS_RELIABILITY) {
+        src->topic_statistics_qos_reliability = (RosQosReliability)g_value_get_enum(value);
+      } else {
+        src->topic_statistics_qos_durability = (RosQosDurability)g_value_get_enum(value);
+      }
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
       break;
@@ -277,6 +426,30 @@ void rosbasesrc_get_property(
 
     case PROP_TIMESTAMP_MODE:
       g_value_set_enum(value, src->timestamp_mode);
+      break;
+
+    case PROP_TOPIC_STATISTICS:
+      g_value_set_enum(value, src->topic_statistics);
+      break;
+
+    case PROP_TOPIC_STATISTICS_TOPIC:
+      g_value_set_string(value, src->topic_statistics_topic);
+      break;
+
+    case PROP_TOPIC_STATISTICS_PERIOD:
+      g_value_set_double(value, src->topic_statistics_period);
+      break;
+
+    case PROP_TOPIC_STATISTICS_QOS_DEPTH:
+      g_value_set_uint(value, src->topic_statistics_qos_depth);
+      break;
+
+    case PROP_TOPIC_STATISTICS_QOS_RELIABILITY:
+      g_value_set_enum(value, src->topic_statistics_qos_reliability);
+      break;
+
+    case PROP_TOPIC_STATISTICS_QOS_DURABILITY:
+      g_value_set_enum(value, src->topic_statistics_qos_durability);
       break;
 
     default:

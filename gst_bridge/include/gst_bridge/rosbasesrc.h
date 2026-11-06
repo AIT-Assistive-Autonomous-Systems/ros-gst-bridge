@@ -42,6 +42,26 @@ typedef struct _RosBaseSrc RosBaseSrc;
 typedef struct _RosBaseSrcClass RosBaseSrcClass;
 
 // how set_timestamps sets the buffer PTS
+// rclcpp::TopicStatisticsState
+typedef enum {
+  TOPIC_STATISTICS_NODE_DEFAULT = 0,  // the node's enable_topic_statistics (local node: off)
+  TOPIC_STATISTICS_ENABLE = 1,
+  TOPIC_STATISTICS_DISABLE = 2,
+} RosTopicStatisticsState;
+
+// QoS policies of the topic statistics publisher
+typedef enum {
+  QOS_RELIABILITY_SYSTEM_DEFAULT = 0,
+  QOS_RELIABILITY_RELIABLE = 1,
+  QOS_RELIABILITY_BEST_EFFORT = 2,
+} RosQosReliability;
+
+typedef enum {
+  QOS_DURABILITY_SYSTEM_DEFAULT = 0,
+  QOS_DURABILITY_VOLATILE = 1,
+  QOS_DURABILITY_TRANSIENT_LOCAL = 2,
+} RosQosDurability;
+
 typedef enum {
   SRC_TIMESTAMP_MODE_ROS_OFFSET = 0,  // header stamp aligned with the offset sampled at start
   SRC_TIMESTAMP_MODE_ARRIVAL = 1,     // arrival time (basesrc do-timestamp)
@@ -56,6 +76,15 @@ struct _RosBaseSrc
   gchar * time_caps;
   gboolean attach_reference_timestamp;
   RosSrcTimestampMode timestamp_mode;
+  // rclcpp topic statistics of the subscription(s) (statistics_msgs/MetricsMessage: message age
+  // and period over each publish period), rclcpp::TopicStatisticsOptions; set before the element
+  // is opened
+  RosTopicStatisticsState topic_statistics;
+  gchar * topic_statistics_topic;
+  gdouble topic_statistics_period;  // s: window and publish period
+  guint topic_statistics_qos_depth;
+  RosQosReliability topic_statistics_qos_reliability;
+  RosQosDurability topic_statistics_qos_durability;
 
   // private variables to construct the node interfaces
   RosBaseImp local_node;
@@ -98,6 +127,12 @@ struct _RosBaseSrcClass
 };
 
 GType rosbasesrc_get_type(void);
+
+/*
+  Options for the sub-classes' subscriptions: topic statistics as set by the element's
+  ros-topic-statistics* properties.
+*/
+rclcpp::SubscriptionOptions rosbasesrc_subscription_options(RosBaseSrc * src);
 
 void set_timestamps(
   GstBuffer ** buffer, RosBaseSrc * src, GstElement * element, GstClockTime msg_time);

@@ -60,7 +60,20 @@ static gboolean rosbasesink_close(RosBaseSink * sink);
   XXX provide a mechanism for ROS to provide a clock
 */
 
-enum { PROP_0, PROP_ROS_NAME, PROP_ROS_NAMESPACE, PROP_ROS_START_TIME, PROP_TIMESTAMP_MODE, PROP_TIMESTAMP_CONVERSION_MODE, PROP_REFERENCE_CAPS, PROP_DIAGNOSTICS, PROP_EXPECTED_RATE, PROP_MAX_STAMP_AGE, PROP_DIAGNOSTIC_HARDWARE_ID };
+enum {
+  PROP_0,
+  PROP_ROS_NAME,
+  PROP_ROS_NAMESPACE,
+  PROP_ROS_START_TIME,
+  PROP_TIMESTAMP_MODE,
+  PROP_TIMESTAMP_CONVERSION_MODE,
+  PROP_REFERENCE_CAPS,
+  PROP_DIAGNOSTICS,
+  PROP_EXPECTED_RATE,
+  PROP_MAX_STAMP_AGE,
+  PROP_DIAGNOSTIC_HARDWARE_ID,
+  PROP_DIAGNOSTIC_PERIOD
+};
 
 /*
   Timestamp of the buffer's reference timestamp meta matching `reference`
@@ -239,6 +252,13 @@ static void rosbasesink_class_init(RosBaseSinkClass * klass)
       "qualified name",
       "", (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
+  g_object_class_install_property(
+    object_class, PROP_DIAGNOSTIC_PERIOD,
+    g_param_spec_double(
+      "ros-diagnostic-period", "Diagnostic period",
+      "Publish period of the diagnostics (s), also the window of the rates and per-period values",
+      0.001, 3600.0, 1.0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
   element_class->change_state = GST_DEBUG_FUNCPTR(
     rosbasesink_change_state);  //use state change events to open and close publishers
   basesink_class->render = GST_DEBUG_FUNCPTR(rosbasesink_render);  // gives us a buffer to forward
@@ -260,6 +280,7 @@ static void rosbasesink_init(RosBaseSink * sink)
   sink->stream_start_prop = GST_CLOCK_TIME_NONE;
   sink->reference_caps = g_strdup("timestamp/x-unix");
   sink->diagnostic_hardware_id = g_strdup("");
+  sink->diagnostic_period = 1.0;
 }
 
 static void rosbasesink_finalize(GObject * object)
@@ -349,6 +370,10 @@ void rosbasesink_set_property(
       sink->diagnostic_hardware_id = g_value_dup_string(value);
       break;
 
+    case PROP_DIAGNOSTIC_PERIOD:
+      sink->diagnostic_period = g_value_get_double(value);
+      break;
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
       break;
@@ -399,6 +424,10 @@ void rosbasesink_get_property(
 
     case PROP_DIAGNOSTIC_HARDWARE_ID:
       g_value_set_string(value, sink->diagnostic_hardware_id);
+      break;
+
+    case PROP_DIAGNOSTIC_PERIOD:
+      g_value_set_double(value, sink->diagnostic_period);
       break;
 
     default:
@@ -487,6 +516,7 @@ static gboolean rosbasesink_open(RosBaseSink * sink)
       config.hardware_id = sink->diagnostic_hardware_id;
     config.expected_rate = sink->expected_rate;
     config.max_stamp_age = sink->max_stamp_age;
+    config.period = sink->diagnostic_period;
     sink->diagnostics =
       std::make_unique<gst_bridge::SinkDiagnostics>(sink->node_if, std::move(config));
     // the sub-classes' topic property, resolved like their publisher's

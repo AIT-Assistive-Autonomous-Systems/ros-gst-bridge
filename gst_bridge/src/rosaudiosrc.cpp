@@ -321,7 +321,8 @@ static gboolean rosaudiosrc_open(RosBaseSrc * ros_base_src)
   rclcpp::QoS qos = rclcpp::SensorDataQoS();  //XXX add a parameter for overrides
 
   src->priv->sub = rclcpp::create_subscription<audio_msgs::msg::Audio>(
-    ros_base_src->node_if->parameters, ros_base_src->node_if->topics, src->sub_topic, qos, cb);
+    ros_base_src->node_if->parameters, ros_base_src->node_if->topics, src->sub_topic, qos, cb,
+    rosbasesrc_subscription_options(ros_base_src));
 
   return TRUE;
 }

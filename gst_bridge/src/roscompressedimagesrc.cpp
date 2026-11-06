@@ -269,7 +269,8 @@ static gboolean roscompressedimagesrc_open(RosBaseSrc * ros_base_src)
   // e.g. invalid topic names throw, fail the state change instead of aborting the process
   try {
     src->priv->sub = rclcpp::create_subscription<Roscompressedimagesrc::MsgType>(
-      ros_base_src->node_if->parameters, ros_base_src->node_if->topics, topic, qos, cb);
+      ros_base_src->node_if->parameters, ros_base_src->node_if->topics, topic, qos, cb,
+      rosbasesrc_subscription_options(ros_base_src));
   } catch (const std::exception & e) {
     RCLCPP_ERROR(
       ros_base_src->node_if->logging->get_logger(), "can't subscribe to '%s': %s", topic.c_str(),

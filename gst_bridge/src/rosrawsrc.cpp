@@ -216,7 +216,8 @@ static gboolean rosrawsrc_open(RosBaseSrc * ros_base_src)
   GST_DEBUG_OBJECT(src, "subscribing to topic '%s'", src->sub_topic);
 
   src->priv->sub = rclcpp::create_subscription<Rosrawsrc::MsgType>(
-    ros_base_src->node_if->parameters, ros_base_src->node_if->topics, src->sub_topic, qos, cb);
+    ros_base_src->node_if->parameters, ros_base_src->node_if->topics, src->sub_topic, qos, cb,
+    rosbasesrc_subscription_options(ros_base_src));
 
   return TRUE;
 }
