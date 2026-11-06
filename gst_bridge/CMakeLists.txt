@@ -53,6 +53,7 @@ find_package(camera_calibration_parsers REQUIRED)
 find_package(ament_index_cpp REQUIRED)
 find_package(builtin_interfaces REQUIRED)
 find_package(gst_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 
 
 ###########
@@ -67,12 +68,14 @@ add_library(gst_bridge SHARED
   src/rosbaseiface.cpp
   src/rosbasesink.cpp
   src/rosbasesrc.cpp
+  src/sink_diagnostics.cpp
 )
 target_include_directories(gst_bridge PUBLIC
   ${rclcpp_INCLUDE_DIRS}
   ${sensor_msgs_INCLUDE_DIRS}
   ${audio_msgs_INCLUDE_DIRS}
   ${gst_msgs_INCLUDE_DIRS}
+  ${diagnostic_msgs_INCLUDE_DIRS}
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>
   ${GLIB_INCLUDE_DIRS}
@@ -83,6 +86,7 @@ target_link_libraries(gst_bridge PUBLIC
   ${sensor_msgs_LIBRARIES}
   ${audio_msgs_LIBRARIES}
   ${gst_msgs_LIBRARIES}
+  ${diagnostic_msgs_LIBRARIES}
   camera_calibration_parsers::camera_calibration_parsers
   ament_index_cpp::ament_index_cpp
   ${GLIB_LIBRARIES}
@@ -213,6 +217,7 @@ ament_export_dependencies(
   rclcpp
   audio_msgs
   sensor_msgs
+  diagnostic_msgs
   camera_calibration_parsers
   ament_index_cpp
 )

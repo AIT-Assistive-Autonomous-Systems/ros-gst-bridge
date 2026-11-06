@@ -60,7 +60,7 @@ static gboolean rosbasesink_close(RosBaseSink * sink);
   XXX provide a mechanism for ROS to provide a clock
 */
 
-enum { PROP_0, PROP_ROS_NAME, PROP_ROS_NAMESPACE, PROP_ROS_START_TIME, PROP_TIMESTAMP_MODE, PROP_TIMESTAMP_CONVERSION_MODE, PROP_REFERENCE_CAPS };
+enum { PROP_0, PROP_ROS_NAME, PROP_ROS_NAMESPACE, PROP_ROS_START_TIME, PROP_TIMESTAMP_MODE, PROP_TIMESTAMP_CONVERSION_MODE, PROP_REFERENCE_CAPS, PROP_DIAGNOSTICS, PROP_EXPECTED_RATE, PROP_MAX_STAMP_AGE };
 
 /*
   Timestamp of the buffer's reference timestamp meta matching `reference`
@@ -207,6 +207,30 @@ static void rosbasesink_class_init(RosBaseSinkClass * klass)
       "(falls back to timestamp/x-ntp, converted to the Unix epoch)",
       "timestamp/x-unix", (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
+  g_object_class_install_property(
+    object_class, PROP_DIAGNOSTICS,
+    g_param_spec_boolean(
+      "diagnostics", "Diagnostics",
+      "Publish the sink's health on /diagnostics once a second: rate, missing frames (gaps in the "
+      "stamps), stamp age, publish time, stalls",
+      TRUE, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property(
+    object_class, PROP_EXPECTED_RATE,
+    g_param_spec_double(
+      "expected-rate", "Expected rate",
+      "Expected message rate (Hz) for the diagnostics, 0: the caps' framerate (video), else "
+      "unknown (gaps against the median interval, rate not checked)",
+      0.0, G_MAXDOUBLE, 0.0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property(
+    object_class, PROP_MAX_STAMP_AGE,
+    g_param_spec_double(
+      "max-stamp-age", "Maximum stamp age",
+      "Diagnostics warn when a message is published more than this many seconds after its stamp "
+      "(node clock), 0: not checked",
+      0.0, G_MAXDOUBLE, 1.0, (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
   element_class->change_state = GST_DEBUG_FUNCPTR(
     rosbasesink_change_state);  //use state change events to open and close publishers
   basesink_class->render = GST_DEBUG_FUNCPTR(rosbasesink_render);  // gives us a buffer to forward
@@ -219,6 +243,10 @@ static void rosbasesink_init(RosBaseSink * sink)
   new (&sink->local_node) RosBaseImp();
   new (&sink->node_if) std::shared_ptr<gst_bridge::node_interface_collection>();
   new (&sink->stream_start) rclcpp::Time();
+  new (&sink->diagnostics) std::unique_ptr<gst_bridge::SinkDiagnostics>();
+  sink->diagnostics_enabled = TRUE;
+  sink->expected_rate = 0.0;
+  sink->max_stamp_age = 1.0;
   sink->node_name = g_strdup("gst_base_sink_node");
   sink->node_namespace = g_strdup("");
   sink->stream_start_prop = GST_CLOCK_TIME_NONE;
@@ -230,6 +258,7 @@ static void rosbasesink_finalize(GObject * object)
   RosBaseSink * sink = GST_ROS_BASE_SINK(object);
   using NodeIfPtr = std::shared_ptr<gst_bridge::node_interface_collection>;
 
+  sink->diagnostics.reset();
   // normally closed on READY_TO_NULL, a joinable spin thread would std::terminate
   if (sink->local_node.node) {
     sink->node_if.reset();  // like close: the local node's interfaces go before the node
@@ -237,6 +266,8 @@ static void rosbasesink_finalize(GObject * object)
   }
 
   sink->stream_start.~Time();
+  sink->diagnostics.~unique_ptr();
+  gst_caps_replace(&sink->diagnostics_caps, NULL);
   sink->node_if.~NodeIfPtr();  // releases an injected host node (gst_pipeline bridge plugin)
   sink->local_node.~RosBaseImp();
   g_free(sink->node_name);
@@ -281,6 +312,15 @@ void rosbasesink_set_property(
       }
       break;
 
+    case PROP_DIAGNOSTICS:
+      sink->diagnostics_enabled = g_value_get_boolean(value);
+      break;
+    case PROP_EXPECTED_RATE:
+      sink->expected_rate = g_value_get_double(value);
+      break;
+    case PROP_MAX_STAMP_AGE:
+      sink->max_stamp_age = g_value_get_double(value);
+      break;
     case PROP_TIMESTAMP_MODE:
       sink->timestamp_mode = (RosTimestampMode)g_value_get_enum(value);
       break;
@@ -321,6 +361,15 @@ void rosbasesink_get_property(
       //      but may cause confusion because it does not show the actual prop
       break;
 
+    case PROP_DIAGNOSTICS:
+      g_value_set_boolean(value, sink->diagnostics_enabled);
+      break;
+    case PROP_EXPECTED_RATE:
+      g_value_set_double(value, sink->expected_rate);
+      break;
+    case PROP_MAX_STAMP_AGE:
+      g_value_set_double(value, sink->max_stamp_age);
+      break;
     case PROP_TIMESTAMP_MODE:
       g_value_set_enum(value, sink->timestamp_mode);
       break;
@@ -411,6 +460,29 @@ static gboolean rosbasesink_open(RosBaseSink * sink)
 
   // allow sub-class to create publishers on sink->node
   if (sink_class->open) result = sink_class->open(sink);
+
+  if (result && sink->diagnostics_enabled && sink->node_if) {
+    gst_bridge::SinkDiagnostics::Config config;
+    config.name = sink->node_if->base->get_fully_qualified_name();
+    config.expected_rate = sink->expected_rate;
+    config.max_stamp_age = sink->max_stamp_age;
+    sink->diagnostics =
+      std::make_unique<gst_bridge::SinkDiagnostics>(sink->node_if, std::move(config));
+    // the sub-classes' topic property, resolved like their publisher's
+    if (g_object_class_find_property(G_OBJECT_GET_CLASS(sink), "ros-topic")) {
+      gchar * topic = nullptr;
+      g_object_get(sink, "ros-topic", &topic, NULL);
+      if (topic) {
+        try {
+          sink->diagnostics->set_topic(
+            sink->node_if->base->resolve_topic_or_service_name(topic, false));
+        } catch (const std::exception &) {
+          sink->diagnostics->set_topic(topic);
+        }
+        g_free(topic);
+      }
+    }
+  }
   return result;
 }
 
@@ -421,6 +493,10 @@ static gboolean rosbasesink_close(RosBaseSink * sink)
   gboolean result = TRUE;
 
   GST_DEBUG_OBJECT(sink, "close");
+
+  // the diagnostics thread publishes on the node: stop it first
+  sink->diagnostics.reset();
+  gst_caps_replace(&sink->diagnostics_caps, NULL);
 
   //allow sub-class to clean up before destroying ros context
   if (sink_class->close) result = sink_class->close(sink);
@@ -509,7 +585,34 @@ static GstFlowReturn rosbasesink_render(GstBaseSink * base_sink, GstBuffer * buf
     }
   }
 
-  if (NULL != sink_class->render) return sink_class->render(sink, buf, msg_time);
+  if (NULL != sink_class->render) {
+    if (sink->diagnostics) {
+      // nominal rate from the caps' framerate, re-read when the caps change
+      GstCaps * caps = gst_pad_get_current_caps(GST_BASE_SINK_PAD(base_sink));
+      if (caps != sink->diagnostics_caps) {
+        double rate = 0.0;
+        gint num = 0, den = 0;
+        if (
+          caps && gst_caps_get_size(caps) > 0 &&
+          gst_structure_get_fraction(gst_caps_get_structure(caps, 0), "framerate", &num, &den) &&
+          num > 0 && den > 0) {
+          rate = static_cast<double>(num) / den;
+        }
+        sink->diagnostics->set_caps_rate(rate);
+        gst_caps_replace(&sink->diagnostics_caps, caps);
+      }
+      if (caps) gst_caps_unref(caps);
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    GstFlowReturn ret = sink_class->render(sink, buf, msg_time);
+    if (ret == GST_FLOW_OK && sink->diagnostics) {
+      sink->diagnostics->on_message(
+        msg_time,
+        std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - t0)
+          .count());
+    }
+    return ret;
+  }
 
   if (sink->node_if)
     RCLCPP_WARN(

@@ -22,6 +22,7 @@
 #include <gst/base/gstbasesink.h>
 #include <gst_bridge/gst_bridge.h>
 #include <gst_bridge/rosbaseiface.h>
+#include <gst_bridge/sink_diagnostics.h>
 
 //include ROS and ROS message formats
 #include <rclcpp/rclcpp.hpp>
@@ -82,6 +83,13 @@ struct _RosBaseSink
   rclcpp::Time stream_start;
   rcl_time_point_value_t stream_start_prop;  //uint64_t, equiv to GST_TYPE_CLOCK_TIME
   GstClockTimeDiff ros_clock_offset;
+
+  // /diagnostics of this sink (rate, missing frames, stamp age, publish time, stalls)
+  gboolean diagnostics_enabled;
+  gdouble expected_rate;
+  gdouble max_stamp_age;
+  std::unique_ptr<gst_bridge::SinkDiagnostics> diagnostics;
+  GstCaps * diagnostics_caps;  // caps the diagnostics' nominal rate was read from
 };
 
 struct _RosBaseSinkClass
