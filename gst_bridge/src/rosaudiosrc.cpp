@@ -39,6 +39,7 @@ struct RosaudiosrcPrivate
   std::queue<audio_msgs::msg::Audio::ConstSharedPtr> msg_queue;
   std::mutex msg_queue_mtx;
   std::condition_variable msg_queue_cv;
+  bool flushing = false;  // basesrc unlock: wake up and return from create
   rclcpp::Subscription<audio_msgs::msg::Audio>::SharedPtr sub;
 };
 
@@ -54,6 +55,8 @@ static void rosaudiosrc_finalize(GObject * object);
 
 static gboolean rosaudiosrc_open(RosBaseSrc * ros_base_src);
 static gboolean rosaudiosrc_close(RosBaseSrc * ros_base_src);
+static gboolean rosaudiosrc_unlock(GstBaseSrc * base_src);
+static gboolean rosaudiosrc_unlock_stop(GstBaseSrc * base_src);
 static GstFlowReturn rosaudiosrc_create(
   GstBaseSrc * gst_base_src, guint64 offset, guint size, GstBuffer ** buf);
 
@@ -140,6 +143,8 @@ static void rosaudiosrc_class_init(RosaudiosrcClass * klass)
   ros_base_src_class->close =
     GST_DEBUG_FUNCPTR(rosaudiosrc_close);  //let the base sink know how we destroy publishers
   basesrc_class->create = GST_DEBUG_FUNCPTR(rosaudiosrc_create);  // allocate and fill a buffer
+  basesrc_class->unlock = GST_DEBUG_FUNCPTR(rosaudiosrc_unlock);
+  basesrc_class->unlock_stop = GST_DEBUG_FUNCPTR(rosaudiosrc_unlock_stop);
 
   basesrc_class->query = GST_DEBUG_FUNCPTR(rosaudiosrc_query);       //set the scheduling modes
   basesrc_class->get_caps = GST_DEBUG_FUNCPTR(rosaudiosrc_getcaps);  //return caps within the filter
@@ -432,6 +437,10 @@ static GstCaps * rosaudiosrc_getcaps(GstBaseSrc * gst_base_src, GstCaps * filter
     GST_DEBUG_OBJECT(src, "getcaps with node ready, waiting for message");
     RCLCPP_INFO(ros_base_src->node_if->logging->get_logger(), "waiting for first message");
     msg = rosaudiosrc_wait_for_msg(src);
+    if (!msg) {
+      GST_DEBUG_OBJECT(src, "getcaps unlocked before the first message, returning template");
+      return gst_pad_get_pad_template_caps(GST_BASE_SRC(src)->srcpad);
+    }
 
     rosaudiosrc_set_msg_props_from_msg(
       src, msg);  //XXX generalise this to return audio_info instead of relying on side-effects
@@ -504,6 +513,10 @@ static GstFlowReturn rosaudiosrc_create(
   }
 
   auto msg = rosaudiosrc_wait_for_msg(src);
+  if (!msg) {
+    GST_DEBUG_OBJECT(src, "unlocked while waiting for a message");
+    return GST_FLOW_FLUSHING;
+  }
   {  //scope the mutex lock
     std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
     src->priv->msg_queue.pop();
@@ -598,6 +611,26 @@ static void rosaudiosrc_sub_cb(Rosaudiosrc * src, audio_msgs::msg::Audio::ConstS
   src->priv->msg_queue_cv.notify_one();
 }
 
+/* basesrc asks us to return from create, e.g. on flushing seeks and state changes to READY */
+static gboolean rosaudiosrc_unlock(GstBaseSrc * base_src)
+{
+  Rosaudiosrc * src = GST_ROSAUDIOSRC(base_src);
+  GST_DEBUG_OBJECT(src, "unlock");
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  src->priv->flushing = true;
+  src->priv->msg_queue_cv.notify_all();
+  return TRUE;
+}
+
+static gboolean rosaudiosrc_unlock_stop(GstBaseSrc * base_src)
+{
+  Rosaudiosrc * src = GST_ROSAUDIOSRC(base_src);
+  GST_DEBUG_OBJECT(src, "unlock_stop");
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  src->priv->flushing = false;
+  return TRUE;
+}
+
 static audio_msgs::msg::Audio::ConstSharedPtr rosaudiosrc_wait_for_msg(Rosaudiosrc * src)
 {
   //RosBaseSrc *ros_base_src = GST_ROS_BASE_SRC (src);
@@ -605,8 +638,10 @@ static audio_msgs::msg::Audio::ConstSharedPtr rosaudiosrc_wait_for_msg(Rosaudios
   GST_DEBUG_OBJECT(src, "wait for msg");
 
   std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
-  while (src->priv->msg_queue.empty()) {
-    src->priv->msg_queue_cv.wait(lck);
+  src->priv->msg_queue_cv.wait(
+    lck, [src] { return src->priv->flushing || !src->priv->msg_queue.empty(); });
+  if (src->priv->flushing) {
+    return nullptr;  // unlocked: the element is stopping or flushing
   }
   auto msg = src->priv->msg_queue.front();
 

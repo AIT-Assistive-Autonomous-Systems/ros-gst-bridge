@@ -40,6 +40,7 @@ struct RosimagesrcPrivate
   std::deque<sensor_msgs::msg::Image::ConstSharedPtr> msg_queue;
   std::mutex msg_queue_mtx;
   std::condition_variable msg_queue_cv;
+  bool flushing = false;  // basesrc unlock: wake up and return from create
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr sub;
 };
 
@@ -55,6 +56,8 @@ static void rosimagesrc_finalize(GObject * object);
 
 static gboolean rosimagesrc_open(RosBaseSrc * ros_base_src);
 static gboolean rosimagesrc_close(RosBaseSrc * ros_base_src);
+static gboolean rosimagesrc_unlock(GstBaseSrc * base_src);
+static gboolean rosimagesrc_unlock_stop(GstBaseSrc * base_src);
 static GstFlowReturn rosimagesrc_create(
   GstBaseSrc * base_src, guint64 offset, guint size, GstBuffer ** buf);
 
@@ -147,6 +150,8 @@ static void rosimagesrc_class_init(RosimagesrcClass * klass)
   ros_base_src_class->notify_thread = GST_DEBUG_FUNCPTR(rosimagesrc_notify_thread);
 
   basesrc_class->create = GST_DEBUG_FUNCPTR(rosimagesrc_create);
+  basesrc_class->unlock = GST_DEBUG_FUNCPTR(rosimagesrc_unlock);
+  basesrc_class->unlock_stop = GST_DEBUG_FUNCPTR(rosimagesrc_unlock_stop);
   basesrc_class->get_caps = GST_DEBUG_FUNCPTR(rosimagesrc_getcaps);  //return caps within the filter
   basesrc_class->query = GST_DEBUG_FUNCPTR(rosimagesrc_query);       //set the scheduling modes
   basesrc_class->fixate =
@@ -437,6 +442,10 @@ static GstCaps * rosimagesrc_getcaps(GstBaseSrc * base_src, GstCaps * filter)
     RCLCPP_INFO(ros_base_src->node_if->logging->get_logger(), "waiting for first message");
     msg =
       rosimagesrc_wait_for_msg(src);  // XXX need to fix API, the action happens in a side-effect
+    if (!msg) {
+      GST_DEBUG_OBJECT(src, "getcaps unlocked before the first message, returning template");
+      return gst_pad_get_pad_template_caps(GST_BASE_SRC(src)->srcpad);
+    }
 
     // if(src->msg_init)
     // {
@@ -513,8 +522,8 @@ static GstFlowReturn rosimagesrc_create(
 
   auto msg = rosimagesrc_wait_for_msg(src);
   if (!msg) {
-    GST_DEBUG_OBJECT(src, "no message to create buffer from");
-    return GST_FLOW_ERROR;
+    GST_DEBUG_OBJECT(src, "unlocked while waiting for a message");
+    return GST_FLOW_FLUSHING;
   } else {
     {  //scope the mutex lock
       std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
@@ -596,14 +605,35 @@ static void rosimagesrc_sub_cb(Rosimagesrc * src, sensor_msgs::msg::Image::Const
   src->priv->msg_queue_cv.notify_one();
 }
 
+/* basesrc asks us to return from create, e.g. on flushing seeks and state changes to READY */
+static gboolean rosimagesrc_unlock(GstBaseSrc * base_src)
+{
+  Rosimagesrc * src = GST_ROSIMAGESRC(base_src);
+  GST_DEBUG_OBJECT(src, "unlock");
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  src->priv->flushing = true;
+  src->priv->msg_queue_cv.notify_all();
+  return TRUE;
+}
+
+static gboolean rosimagesrc_unlock_stop(GstBaseSrc * base_src)
+{
+  Rosimagesrc * src = GST_ROSIMAGESRC(base_src);
+  GST_DEBUG_OBJECT(src, "unlock_stop");
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  src->priv->flushing = false;
+  return TRUE;
+}
+
 static sensor_msgs::msg::Image::ConstSharedPtr rosimagesrc_wait_for_msg(Rosimagesrc * src)
 {
   //RosBaseSrc *ros_base_src = GST_ROS_BASE_SRC (src);
 
   std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
-  src->priv->msg_queue_cv.wait(lck);
-  if (src->priv->msg_queue.empty()) {
-    // the wait was interrupted
+  src->priv->msg_queue_cv.wait(
+    lck, [src] { return src->priv->flushing || !src->priv->msg_queue.empty(); });
+  if (src->priv->flushing) {
+    // unlocked: the element is stopping or flushing
     return sensor_msgs::msg::Image::ConstSharedPtr();
   }
   auto msg = src->priv->msg_queue.front();

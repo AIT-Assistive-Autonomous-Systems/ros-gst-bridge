@@ -42,6 +42,7 @@ struct RostextsrcPrivate
   std::queue<std_msgs::msg::String::ConstSharedPtr> msg_queue;
   std::mutex msg_queue_mtx;
   std::condition_variable msg_queue_cv;
+  bool flushing = false;  // basesrc unlock: wake up and return from create
 };
 
 /* prototypes */
@@ -57,6 +58,8 @@ static void rostextsrc_finalize(GObject * object);
 static gboolean rostextsrc_open(RosBaseSrc * ros_base_src);
 static gboolean rostextsrc_close(RosBaseSrc * ros_base_src);
 
+static gboolean rostextsrc_unlock(GstBaseSrc * base_src);
+static gboolean rostextsrc_unlock_stop(GstBaseSrc * base_src);
 static GstFlowReturn rostextsrc_create(
   GstBaseSrc * base_src, guint64 offset, guint size, GstBuffer ** buf);
 static gboolean rostextsrc_query(GstBaseSrc * base_src, GstQuery * query);
@@ -125,6 +128,8 @@ static void rostextsrc_class_init(RostextsrcClass * klass)
     GST_DEBUG_FUNCPTR(rostextsrc_close);  //let the base sink know how we destroy publishers
 
   basesrc_class->create = GST_DEBUG_FUNCPTR(rostextsrc_create);
+  basesrc_class->unlock = GST_DEBUG_FUNCPTR(rostextsrc_unlock);
+  basesrc_class->unlock_stop = GST_DEBUG_FUNCPTR(rostextsrc_unlock_stop);
   basesrc_class->query = GST_DEBUG_FUNCPTR(rostextsrc_query);  //set the scheduling modes
 }
 
@@ -295,6 +300,10 @@ static GstFlowReturn rostextsrc_create(
   }
 
   auto msg = rostextsrc_wait_for_msg(src);
+  if (!msg) {
+    GST_DEBUG_OBJECT(src, "unlocked while waiting for a message");
+    return GST_FLOW_FLUSHING;
+  }
   {  //scope the mutex lock
     std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
     src->priv->msg_queue.pop();  // XXX we can stop dropping the first message during preroll now
@@ -360,13 +369,35 @@ static void rostextsrc_sub_cb(Rostextsrc * src, std_msgs::msg::String::ConstShar
   src->priv->msg_queue_cv.notify_one();
 }
 
+/* basesrc asks us to return from create, e.g. on flushing seeks and state changes to READY */
+static gboolean rostextsrc_unlock(GstBaseSrc * base_src)
+{
+  Rostextsrc * src = GST_ROSTEXTSRC(base_src);
+  GST_DEBUG_OBJECT(src, "unlock");
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  src->priv->flushing = true;
+  src->priv->msg_queue_cv.notify_all();
+  return TRUE;
+}
+
+static gboolean rostextsrc_unlock_stop(GstBaseSrc * base_src)
+{
+  Rostextsrc * src = GST_ROSTEXTSRC(base_src);
+  GST_DEBUG_OBJECT(src, "unlock_stop");
+  std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
+  src->priv->flushing = false;
+  return TRUE;
+}
+
 static std_msgs::msg::String::ConstSharedPtr rostextsrc_wait_for_msg(Rostextsrc * src)
 {
   //RosBaseSrc *ros_base_src = GST_ROS_BASE_SRC (src);
 
   std::unique_lock<std::mutex> lck(src->priv->msg_queue_mtx);
-  while (src->priv->msg_queue.empty()) {
-    src->priv->msg_queue_cv.wait(lck);
+  src->priv->msg_queue_cv.wait(
+    lck, [src] { return src->priv->flushing || !src->priv->msg_queue.empty(); });
+  if (src->priv->flushing) {
+    return nullptr;  // unlocked: the element is stopping or flushing
   }
   auto msg = src->priv->msg_queue.front();
 
