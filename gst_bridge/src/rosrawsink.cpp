@@ -30,6 +30,7 @@
 #include <gst_bridge/rosrawsink.h>
 
 #include <memory>
+#include <string>
 
 GST_DEBUG_CATEGORY_STATIC(rosrawsink_debug_category);
 #define GST_CAT_DEFAULT rosrawsink_debug_category
@@ -38,6 +39,7 @@ struct RosrawsinkPrivate
 {
   using MsgType = Rosrawsink::MsgType;
   rclcpp::Publisher<MsgType>::SharedPtr pub;
+  std::string frame_id;  // header.frame_id, e.g. the image's frame for detections
 };
 
 static void rosrawsink_set_property(
@@ -51,7 +53,7 @@ static gboolean rosrawsink_close(RosBaseSink * ros_base_sink);
 static GstFlowReturn rosrawsink_render(
   RosBaseSink * sink, GstBuffer * buffer, rclcpp::Time msg_time);
 
-enum { PROP_0, PROP_ROS_TOPIC };
+enum { PROP_0, PROP_ROS_TOPIC, PROP_ROS_FRAME_ID };
 
 static GstStaticPadTemplate rosrawsink_sink_template = GST_STATIC_PAD_TEMPLATE(
   "sink", GST_PAD_SINK, GST_PAD_ALWAYS, GST_STATIC_CAPS("application/x-onvif-metadata; application/json"));
@@ -80,6 +82,13 @@ static void rosrawsink_class_init(RosrawsinkClass * klass)
     object_class, PROP_ROS_TOPIC,
     g_param_spec_string(
       "ros-topic", "ROS Topic", "ROS topic to publish raw data on", "raw_data",
+      (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property(
+    object_class, PROP_ROS_FRAME_ID,
+    g_param_spec_string(
+      "ros-frame-id", "frame-id",
+      "header.frame_id of the messages, e.g. the frame of the image the data refers to", "",
       (GParamFlags)(G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   ros_base_sink_class->open = GST_DEBUG_FUNCPTR(rosrawsink_open);
@@ -121,6 +130,11 @@ static void rosrawsink_set_property(
         sink->pub_topic = g_value_dup_string(value);
       }
       break;
+    case PROP_ROS_FRAME_ID: {
+      const gchar * id = g_value_get_string(value);
+      sink->priv->frame_id = id ? id : "";
+      break;
+    }
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
       break;
@@ -135,6 +149,9 @@ static void rosrawsink_get_property(
   switch (property_id) {
     case PROP_ROS_TOPIC:
       g_value_set_string(value, sink->pub_topic);
+      break;
+    case PROP_ROS_FRAME_ID:
+      g_value_set_string(value, sink->priv->frame_id.c_str());
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID(object, property_id, pspec);
@@ -175,6 +192,7 @@ static GstFlowReturn rosrawsink_render(RosBaseSink * ros_base_sink, GstBuffer * 
   }
 
   msg.header.stamp = msg_time;
+  msg.header.frame_id = sink->priv->frame_id;
   msg.data = std::vector<uint8_t>(info.data, info.data + info.size);
   gst_buffer_unmap(buf, &info);
 
